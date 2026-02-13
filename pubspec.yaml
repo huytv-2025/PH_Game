@@ -1,0 +1,44 @@
+name: ph_game
+description: A new Flutter project.
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flame: ^1.18.0
+  flame_audio: ^2.0.0
+  audioplayers: ^6.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.1
+
+
+flutter:
+  assets:
+    - assets/images/yellowbird-midflap.png
+    - assets/images/tuabin.png
+    - assets/images/phitieu.png
+    - assets/images/game.png
+    - assets/images/bush.png
+    - assets/images/house.png
+    - assets/images/giphy.png
+    
+
+        # Thêm phần này để tạo icon
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/game.jpg"    # ← sửa đường dẫn thành đúng vị trí file
+  remove_alpha_ios: true
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/images/game.jpg"
+    
