@@ -1,4 +1,4 @@
-import 'dart:math';
+import 'dart:math' as math;
 
 import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
@@ -10,20 +10,20 @@ import 'package:flutter/services.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-
   runApp(
     GameWidget<MazeGame>(
       game: MazeGame(),
       overlayBuilderMap: {
-        'GameOver': (context, game) => GameOverOverlay(game: game as MazeGame),
-        'LevelComplete': (context, game) => LevelCompleteOverlay(game: game as MazeGame),
-        'PauseMenu': (context, game) => PauseMenuOverlay(game: game as MazeGame),
+        'GameOver': (context, game) => GameOverOverlay(game: game),
+        'LevelComplete': (context, game) => LevelCompleteOverlay(game: game),
+        'PauseMenu': (context, game) => PauseMenuOverlay(game: game),
+        'MathChallenge': (context, game) => MathChallengeOverlay(game: game),
       },
     ),
   );
 }
 
-class MazeGame extends FlameGame with HasCollisionDetection {
+class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   late Player player;
   late TextComponent levelText;
   late TextComponent timerText;
@@ -38,9 +38,10 @@ class MazeGame extends FlameGame with HasCollisionDetection {
   final List<Bush> bushes = [];
   ExitPortal? exitPortal;
 
-  Vector2 moveDirection = Vector2.zero();
+  bool isMathChallengeActive = false;
+  MathChallenge? currentMathChallenge;
 
-  bool _levelLoaded = false;
+  double worldScrollSpeed = 180.0;
 
   @override
   Color backgroundColor() => const Color(0xFF0D1B2A);
@@ -48,32 +49,26 @@ class MazeGame extends FlameGame with HasCollisionDetection {
   @override
   void onGameResize(Vector2 gameSize) {
     super.onGameResize(gameSize);
+    if (size.isZero()) return;
 
-    if (!_levelLoaded && !gameSize.isZero()) {
-      _levelLoaded = true;
-      loadLevel(currentLevel);
+    if (currentLevel == 1 && bushes.isEmpty) {
+      loadLevel(1);
     }
   }
 
   Future<void> loadLevel(int level) async {
-    if (size.isZero()) {
-      await Future.delayed(const Duration(milliseconds: 50));
-      return loadLevel(level);
-    }
+    children
+        .where((c) => c is Bush || c is Player || c is ExitPortal || c is HudButton)
+        .forEach(remove);
 
-    print('Loading level $level - canvas size: $size');
-
-    // Xóa cũ
-    children.where((c) => c is Bush || c is Player || c is ExitPortal || c is HudButton).forEach(remove);
     bushes.clear();
     exitPortal = null;
     pauseButton = null;
 
-    // Pause button
     pauseButton = HudButton(
       position: Vector2(size.x - 90, 90),
       onPressed: () {
-        if (!isGameOver && !isLevelComplete) {
+        if (!isGameOver && !isLevelComplete && !isMathChallengeActive) {
           pauseEngine();
           overlays.add('PauseMenu');
         }
@@ -81,12 +76,13 @@ class MazeGame extends FlameGame with HasCollisionDetection {
     );
     add(pauseButton!);
 
-    // Text
     levelText = TextComponent(
       text: 'Màn $level / $maxLevel',
       position: Vector2(size.x / 2, 40),
       anchor: Anchor.center,
-      textRenderer: TextPaint(style: const TextStyle(fontSize: 36, color: Colors.white, fontWeight: FontWeight.bold)),
+      textRenderer: TextPaint(
+        style: const TextStyle(fontSize: 36, color: Colors.white, fontWeight: FontWeight.bold),
+      ),
     );
     add(levelText);
 
@@ -94,129 +90,58 @@ class MazeGame extends FlameGame with HasCollisionDetection {
       text: getLevelTime(level).toStringAsFixed(1),
       position: Vector2(size.x - 80, 40),
       anchor: Anchor.centerRight,
-      textRenderer: TextPaint(style: const TextStyle(fontSize: 36, color: Colors.yellowAccent, fontWeight: FontWeight.bold)),
+      textRenderer: TextPaint(
+        style: const TextStyle(fontSize: 36, color: Colors.yellowAccent, fontWeight: FontWeight.bold),
+      ),
     );
     add(timerText);
 
-    generateMaze(level);
+    generateObstacles(level);
 
-    player = Player(position: Vector2(120, 120));
+    player = Player(position: Vector2(180, size.y / 2));
     await player.onLoad();
     add(player);
 
-    await Future.delayed(Duration.zero);
-    if (player.isCollidingWithAnyBush()) {
-      print('Spawn collision detected - adjusting player position');
-      player.position = Vector2(180, 180);
-      if (player.isCollidingWithAnyBush()) {
-        player.position = Vector2(240, 240);
-      }
-    }
-
-    exitPortal = ExitPortal(position: getExitPosition(level));
+    exitPortal = ExitPortal(position: Vector2(size.x + 600, size.y / 2));
     await exitPortal!.onLoad();
     add(exitPortal!);
 
     isGameOver = false;
     isLevelComplete = false;
+    isMathChallengeActive = false;
     levelTimeLeft = getLevelTime(level);
-    moveDirection = Vector2.zero();
 
-    print('Level $level loaded - player: ${player.position}, exit: ${exitPortal?.position}');
+    worldScrollSpeed = 160.0 + level * 18.0;
+
+    print('Level $level loaded - bushes: ${bushes.length}');
   }
 
-  double getLevelTime(int level) => 70.0 - (level - 1) * 5.0;
+  double getLevelTime(int level) => 75.0 - (level - 1) * 5.0;
 
-  double getPlayerSpeed(int level) => 180.0 + (level - 1) * 20.0;
+  void generateObstacles(int level) {
+    final random = math.Random();
 
-  void generateMaze(int level) {
-    const double cellSize = 64.0;
-    final random = Random();
+    const double spacing = 320.0;
+    double gapSize = 220.0 - (level * 8.0).clamp(0.0, 120.0);
 
-    bushes.clear();
+    int columns = (size.x / spacing).ceil() + 5;
 
-    // Tường viền (luôn có)
-    for (double x = 0; x < size.x; x += cellSize) {
-      bushes.add(Bush(Vector2(x, 0)));
-      bushes.add(Bush(Vector2(x, size.y - cellSize)));
-    }
-    for (double y = 0; y < size.y; y += cellSize) {
-      bushes.add(Bush(Vector2(0, y)));
-      bushes.add(Bush(Vector2(size.x - cellSize, y)));
-    }
+    for (int i = 0; i < columns; i++) {
+      double x = size.x + i * spacing + random.nextDouble() * 100;
+      double gapY = 100 + random.nextDouble() * (size.y - 200 - gapSize);
 
-    // Bụi cố định - thiết kế để có đường đi
-    List<List<double>> fixed = [];
-    switch (level) {
-      case 1:
-        fixed = [
-          [3, 3], [3, 4], [3, 5],
-          [6, 3], [6, 4], [6, 5],
-          [9, 3], [9, 4], [9, 5],
-        ];
-        break;
-      case 2:
-        fixed = [
-          [2, 2], [2, 3], [2, 4],
-          [5, 5], [5, 6], [5, 7],
-          [8, 2], [8, 3], [8, 4],
-          [11, 6], [11, 7], [11, 8],
-        ];
-        break;
-      case 3:
-        fixed = [
-          [4, 1], [4, 2], [4, 3], [4, 4],
-          [8, 5], [8, 6], [8, 7], [8, 8],
-          [12, 2], [12, 3], [12, 4],
-        ];
-        break;
-      case 4:
-        fixed = [
-          [3, 2], [3, 3], [3, 4],
-          [7, 5], [7, 6], [7, 7],
-          [10, 3], [10, 4], [10, 5],
-        ];
-        break;
-      default:
-        // Level cao hơn: ít bụi cố định hơn để dễ đi
-        fixed = [];
-    }
-
-    for (var p in fixed) {
-      bushes.add(Bush(Vector2(p[0] * cellSize, p[1] * cellSize)));
-    }
-
-    // Bụi ngẫu nhiên - GIẢM SỐ LƯỢNG để tránh chặn lối
-    final int extraCount = 4 + (level - 1) * 1; // chỉ 4~13 bụi tùy level
-    final Set<String> occupied = bushes.map((b) {
-      int cx = (b.position.x / cellSize).floor();
-      int cy = (b.position.y / cellSize).floor();
-      return '$cx,$cy';
-    }).toSet();
-
-    int added = 0;
-    while (added < extraCount) {
-      int cx = 1 + random.nextInt((size.x / cellSize - 2).floor());
-      int cy = 1 + random.nextInt((size.y / cellSize - 2).floor());
-      String key = '$cx,$cy';
-      if (!occupied.contains(key)) {
-        bushes.add(Bush(Vector2(cx * cellSize, cy * cellSize)));
-        occupied.add(key);
-        added++;
-      }
+      bushes.add(Bush(Vector2(x, gapY - gapSize / 2 - 80)));
+      bushes.add(Bush(Vector2(x, gapY + gapSize / 2 + 80)));
     }
 
     bushes.forEach(add);
-    print('Level $level: ${bushes.length} bushes (fixed + $added random)');
   }
-
-  Vector2 getExitPosition(int level) => Vector2(size.x - 120, size.y - 120);
 
   @override
   void update(double dt) {
     super.update(dt);
 
-    if (isGameOver || isLevelComplete) return;
+    if (isGameOver || isLevelComplete || isMathChallengeActive) return;
 
     levelTimeLeft -= dt;
     timerText.text = levelTimeLeft.toStringAsFixed(1);
@@ -226,13 +151,42 @@ class MazeGame extends FlameGame with HasCollisionDetection {
       return;
     }
 
-    if (!moveDirection.isZero()) {
-      player.move(moveDirection.normalized() * getPlayerSpeed(currentLevel) * dt);
+    // Di chuyển bụi
+    for (final bush in bushes) {
+      bush.position.x -= worldScrollSpeed * dt;
+
+      if (bush.position.x < -150) {
+        bush.position.x = size.x + 150 + math.Random().nextDouble() * 200;
+        bush.position.y = 60 + math.Random().nextDouble() * (size.y - 120);
+      }
     }
 
-    if (exitPortal != null && player.position.distanceTo(exitPortal!.position) < 55) {
-      completeLevel();
+    // Di chuyển cổng thoát
+    if (exitPortal != null) {
+      exitPortal!.position.x -= worldScrollSpeed * 0.45 * dt;
+
+      if (exitPortal!.position.x < -200) {
+        exitPortal!.position.x = size.x + 500;
+        exitPortal!.position.y = 100 + math.Random().nextDouble() * (size.y - 200);
+      }
+
+      // Khi chim gần cổng thoát → kiểm tra toán (chủ động)
+      if (player.position.distanceTo(exitPortal!.position) < 100) {
+        if (currentLevel % 3 == 0 && currentLevel < maxLevel) {
+          // Hiện toán khi gần cổng (màn 3,6,9...)
+          startMathChallenge();
+        } else {
+          completeLevel();
+        }
+      }
     }
+
+    player.applyPhysics(dt);
+  }
+
+  void onTapDown(TapDownEvent event) {
+    if (isGameOver || isLevelComplete || isMathChallengeActive) return;
+    player.jump();
   }
 
   void gameOver() {
@@ -258,100 +212,144 @@ class MazeGame extends FlameGame with HasCollisionDetection {
     currentLevel++;
     overlays.remove('LevelComplete');
     await Future.delayed(const Duration(milliseconds: 400));
-    _levelLoaded = false;
-    loadLevel(currentLevel);
+    await loadLevel(currentLevel);
     resumeEngine();
   }
 
   Future<void> restartGame() async {
     currentLevel = 1;
-    overlays.remove('GameOver');
-    overlays.remove('LevelComplete');
-    overlays.remove('PauseMenu');
+    overlays.removeAll(['GameOver', 'LevelComplete', 'PauseMenu', 'MathChallenge']);
     await Future.delayed(const Duration(milliseconds: 400));
-    _levelLoaded = false;
-    loadLevel(1);
+    await loadLevel(1);
     resumeEngine();
+  }
+
+  void startMathChallenge() {
+    if (isMathChallengeActive) return; // tránh hiện nhiều lần
+
+    isMathChallengeActive = true;
+    pauseEngine();
+
+    final rnd = math.Random();
+    final a = rnd.nextInt(20) + 5; // 5..24
+    final b = rnd.nextInt(a + 1);  // 0..a để tránh âm
+    final isPlus = rnd.nextBool();
+    final correct = isPlus ? a + b : a - b;
+
+    final options = [correct];
+    while (options.length < 3) {
+      final wrong = correct + rnd.nextInt(9) - 4; // sai lệch nhỏ
+      if (!options.contains(wrong)) options.add(wrong);
+    }
+    options.shuffle();
+
+    currentMathChallenge = MathChallenge(
+      question: isPlus ? '$a + $b = ?' : '$a - $b = ?',
+      options: options,
+      correctIndex: options.indexOf(correct),
+      onCorrect: () {
+        isMathChallengeActive = false;
+        resumeEngine();
+        overlays.remove('MathChallenge');
+        completeLevel(); // đúng → hoàn thành màn
+      },
+      onWrong: () {
+        gameOver();
+      },
+    );
+
+    overlays.add('MathChallenge');
   }
 }
 
-class Player extends SpriteComponent with CollisionCallbacks, DragCallbacks, HasGameReference<MazeGame> {
+class Player extends SpriteComponent with CollisionCallbacks {
   CircleHitbox? hitbox;
 
-  Player({required Vector2 position}) : super(position: position, size: Vector2(52, 52), anchor: Anchor.center);
+  double velocityY = 0.0;
+  final double gravity = 1100.0;
+  final double jumpForce = -380.0;
+
+  Player({required Vector2 position})
+      : super(position: position, size: Vector2(56, 56), anchor: Anchor.center);
 
   @override
   Future<void> onLoad() async {
     try {
       sprite = await Sprite.load('yellowbird-midflap.png');
     } catch (e) {
-      print('Load yellowbird failed: $e');
+      print('Không load được chim: $e');
       paint = Paint()..color = Colors.yellow;
     }
-    hitbox = CircleHitbox(radius: 22);
+    hitbox = CircleHitbox(radius: 24);
     add(hitbox!);
   }
 
-  void move(Vector2 delta) {
-    position.add(delta);
-    position.x = position.x.clamp(26, game.size.x - 26);
-    position.y = position.y.clamp(26, game.size.y - 26);
+  void jump() {
+    velocityY = jumpForce;
+  }
+
+  void applyPhysics(double dt) {
+    velocityY += gravity * dt;
+    position.y += velocityY * dt;
+
+    final game = findGame() as MazeGame?;
+    if (game != null) {
+      position.y = position.y.clamp(30.0, game.size.y - 30.0);
+
+      if (position.y <= 30.0 || position.y >= game.size.y - 30.0) {
+        game.gameOver();
+      }
+    } else {
+      position.y = position.y.clamp(30.0, 800.0); // fallback
+    }
   }
 
   @override
   void onCollisionStart(Set<Vector2> intersectionPoints, PositionComponent other) {
     super.onCollisionStart(intersectionPoints, other);
-    if (other is Bush) {
+    final game = findGame() as MazeGame?;
+    if (other is Bush && game != null) {
       game.gameOver();
-      print('Collision with bush at ${other.position} - player at ${position}');
     }
-  }
-
-  @override
-  void onDragUpdate(DragUpdateEvent event) {
-    super.onDragUpdate(event);
-    if (game.isGameOver || game.isLevelComplete) return;
-    final delta = event.localDelta;
-    if (delta.length > 5) game.moveDirection = delta.normalized();
-  }
-
-  @override
-  void onDragEnd(DragEndEvent event) {
-    super.onDragEnd(event);
-    game.moveDirection = Vector2.zero();
   }
 }
 
 class Bush extends SpriteComponent with CollisionCallbacks {
   RectangleHitbox? hitbox;
 
-  Bush(Vector2 pos) : super(position: pos, size: Vector2(64, 64), anchor: Anchor.topLeft);
+  Bush(Vector2 pos)
+      : super(position: pos, size: Vector2(88, 88), anchor: Anchor.center);
 
   @override
   Future<void> onLoad() async {
     try {
       sprite = await Sprite.load('bush.png');
     } catch (e) {
-      print('Load bush failed: $e');
-      paint = Paint()..color = Colors.green;
+      print('Không load được bụi: $e');
+      paint = Paint()..color = Colors.green.shade700;
     }
-    hitbox = RectangleHitbox(size: Vector2(56, 56), anchor: Anchor.center, position: Vector2(32, 32));
+    hitbox = RectangleHitbox(
+      size: Vector2(76, 76),
+      anchor: Anchor.center,
+      position: size / 2,
+    );
     add(hitbox!);
   }
 }
 
-class ExitPortal extends SpriteComponent with CollisionCallbacks, HasGameReference<MazeGame> {
-  ExitPortal({required Vector2 position}) : super(position: position, size: Vector2(90, 90), anchor: Anchor.center);
+class ExitPortal extends SpriteComponent {
+  ExitPortal({required Vector2 position})
+      : super(position: position, size: Vector2(120, 120), anchor: Anchor.center);
 
   @override
   Future<void> onLoad() async {
     try {
       sprite = await Sprite.load('house.png');
     } catch (e) {
-      print('Load house failed: $e');
+      print('Không load được nhà: $e');
       paint = Paint()..color = Colors.brown;
     }
-    add(CircleHitbox(radius: 40));
+    add(CircleHitbox(radius: 50));
   }
 }
 
@@ -359,13 +357,16 @@ class HudButton extends PositionComponent with TapCallbacks {
   final VoidCallback onPressed;
   late TextComponent icon;
 
-  HudButton({required Vector2 position, required this.onPressed}) : super(position: position, size: Vector2(64, 64));
+  HudButton({required Vector2 position, required this.onPressed})
+      : super(position: position, size: Vector2(64, 64));
 
   @override
   Future<void> onLoad() async {
     icon = TextComponent(
       text: '⏸',
-      textRenderer: TextPaint(style: const TextStyle(fontSize: 48, color: Colors.white70, fontWeight: FontWeight.bold)),
+      textRenderer: TextPaint(
+        style: const TextStyle(fontSize: 48, color: Colors.white70, fontWeight: FontWeight.bold),
+      ),
       anchor: Anchor.center,
       position: size / 2,
     );
@@ -378,9 +379,96 @@ class HudButton extends PositionComponent with TapCallbacks {
   }
 }
 
-// Overlays (giữ nguyên)
+class MathChallenge {
+  final String question;
+  final List<int> options;
+  final int correctIndex;
+  final VoidCallback onCorrect;
+  final VoidCallback onWrong;
+
+  MathChallenge({
+    required this.question,
+    required this.options,
+    required this.correctIndex,
+    required this.onCorrect,
+    required this.onWrong,
+  });
+}
+
+class MathChallengeOverlay extends StatelessWidget {
+  final MazeGame game;
+
+  const MathChallengeOverlay({super.key, required this.game});
+
+  @override
+  Widget build(BuildContext context) {
+    final challenge = game.currentMathChallenge!;
+
+    return Material(
+      color: Colors.black.withAlpha(210),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.all(36),
+          decoration: BoxDecoration(
+            color: Colors.indigo.shade900,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.yellowAccent, width: 4),
+          ),
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'GIẢI NHANH!',
+                style: TextStyle(fontSize: 52, color: Colors.yellow, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 32),
+              Text(
+                challenge.question,
+                style: const TextStyle(fontSize: 80, color: Colors.white, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 60),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(3, (i) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 24),
+                        backgroundColor: Colors.deepPurple.shade600,
+                        foregroundColor: Colors.white,
+                        textStyle: const TextStyle(fontSize: 52),
+                      ),
+                      onPressed: () {
+                        if (i == challenge.correctIndex) {
+                          challenge.onCorrect();
+                        } else {
+                          challenge.onWrong();
+                        }
+                      },
+                      child: Text('${challenge.options[i]}'),
+                    ),
+                  );
+                }),
+              ),
+              const SizedBox(height: 28),
+              const Text(
+                'Chọn sai → thua ngay!',
+                style: TextStyle(fontSize: 26, color: Colors.orangeAccent),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Các overlay khác giữ nguyên (PauseMenu, LevelComplete, GameOver)
 class PauseMenuOverlay extends StatelessWidget {
   final MazeGame game;
+
   const PauseMenuOverlay({super.key, required this.game});
 
   @override
@@ -388,27 +476,30 @@ class PauseMenuOverlay extends StatelessWidget {
     return Material(
       color: Colors.black.withAlpha(160),
       child: Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('TẠM DỪNG', style: TextStyle(fontSize: 60, color: Colors.white, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 50),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 70, vertical: 20), backgroundColor: Colors.blue, foregroundColor: Colors.white),
-            onPressed: () {
-              game.overlays.remove('PauseMenu');
-              game.resumeEngine();
-            },
-            child: const Text('Tiếp tục', style: TextStyle(fontSize: 32)),
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 70, vertical: 20), backgroundColor: Colors.orange, foregroundColor: Colors.white),
-            onPressed: () async {
-              game.overlays.remove('PauseMenu');
-              await game.restartGame();
-            },
-            child: const Text('Chơi lại', style: TextStyle(fontSize: 32)),
-          ),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('TẠM DỪNG', style: TextStyle(fontSize: 64, color: Colors.white, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 60),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 90, vertical: 28), backgroundColor: Colors.blue),
+              onPressed: () {
+                game.overlays.remove('PauseMenu');
+                game.resumeEngine();
+              },
+              child: const Text('Tiếp tục', style: TextStyle(fontSize: 40)),
+            ),
+            const SizedBox(height: 28),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 90, vertical: 28), backgroundColor: Colors.orange),
+              onPressed: () async {
+                game.overlays.remove('PauseMenu');
+                await game.restartGame();
+              },
+              child: const Text('Chơi lại', style: TextStyle(fontSize: 40)),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -416,6 +507,7 @@ class PauseMenuOverlay extends StatelessWidget {
 
 class LevelCompleteOverlay extends StatelessWidget {
   final MazeGame game;
+
   const LevelCompleteOverlay({super.key, required this.game});
 
   @override
@@ -423,17 +515,20 @@ class LevelCompleteOverlay extends StatelessWidget {
     return Material(
       color: Colors.black.withAlpha(166),
       child: Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('HOÀN THÀNH!', style: TextStyle(fontSize: 64, color: Colors.greenAccent, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 20),
-          Text('Màn ${game.currentLevel}', style: const TextStyle(fontSize: 42, color: Colors.white)),
-          const SizedBox(height: 50),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 60, vertical: 20), backgroundColor: Colors.green, foregroundColor: Colors.white),
-            onPressed: () => game.nextLevel(),
-            child: const Text('Tiếp tục', style: TextStyle(fontSize: 32)),
-          ),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('HOÀN THÀNH!', style: TextStyle(fontSize: 68, color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 24),
+            Text('Màn ${game.currentLevel}', style: const TextStyle(fontSize: 48, color: Colors.white)),
+            const SizedBox(height: 60),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 80, vertical: 28), backgroundColor: Colors.green),
+              onPressed: () => game.nextLevel(),
+              child: const Text('Tiếp tục', style: TextStyle(fontSize: 40)),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -441,38 +536,34 @@ class LevelCompleteOverlay extends StatelessWidget {
 
 class GameOverOverlay extends StatelessWidget {
   final MazeGame game;
+
   const GameOverOverlay({super.key, required this.game});
 
   @override
   Widget build(BuildContext context) {
     final isWin = game.currentLevel > game.maxLevel;
+
     return Material(
       color: Colors.black.withAlpha(217),
       child: Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(isWin ? 'CHIẾN THẮNG!' : 'GAME OVER', style: TextStyle(fontSize: 64, color: isWin ? Colors.yellow : Colors.redAccent, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 20),
-          if (!isWin) const Text('Bạn đã chạm bụi cỏ hoặc hết thời gian!', style: TextStyle(fontSize: 28, color: Colors.white70)),
-          const SizedBox(height: 40),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 60, vertical: 20), backgroundColor: Colors.orange, foregroundColor: Colors.white),
-            onPressed: () => game.restartGame(),
-            child: const Text('Chơi lại', style: TextStyle(fontSize: 32)),
-          ),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              isWin ? 'CHIẾN THẮNG!' : 'GAME OVER',
+              style: TextStyle(fontSize: 72, color: isWin ? Colors.yellow : Colors.redAccent, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 28),
+            if (!isWin) const Text('Đụng bụi hoặc hết thời gian!', style: TextStyle(fontSize: 32, color: Colors.white70)),
+            const SizedBox(height: 60),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 80, vertical: 28), backgroundColor: Colors.orange),
+              onPressed: () => game.restartGame(),
+              child: const Text('Chơi lại', style: TextStyle(fontSize: 40)),
+            ),
+          ],
+        ),
       ),
     );
-  }
-}
-
-// Extension
-extension on Player {
-  bool isCollidingWithAnyBush() {
-    final playerRect = hitbox?.toAbsoluteRect() ?? Rect.zero;
-    for (final bush in game.bushes) {
-      final bushRect = bush.hitbox?.toAbsoluteRect() ?? Rect.zero;
-      if (playerRect.overlaps(bushRect)) return true;
-    }
-    return false;
   }
 }
