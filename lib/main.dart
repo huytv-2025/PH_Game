@@ -21,6 +21,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final game = MazeGame();
 
+    // Tự động hiển thị màn hình bắt đầu ngay sau khi game được tạo
     WidgetsBinding.instance.addPostFrameCallback((_) {
       game.overlays.add('StartScreen');
       game.pauseEngine();
@@ -43,7 +44,7 @@ class MyApp extends StatelessWidget {
           'GameOver': (context, game) => GameOverOverlay(game: game),
           'PauseMenu': (context, game) => PauseMenuOverlay(game: game),
           'MathChallenge': (context, game) => MathChallengeOverlay(game: game),
-          'StartScreen': (context, game) => StartScreenOverlay(game: game),
+          'StartScreen': (context, game) => StartScreenOverlay(game: game),  // ← sửa ở đây
         },
       ),
     );
@@ -54,7 +55,6 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   Player? player;
   late TextComponent levelText;
   late TextComponent timerText;
-  late TextComponent nameDisplay; // ← Thêm để quản lý text tên người chơi
   HudButton? pauseButton;
 
   int currentLevel = 1;
@@ -70,18 +70,21 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
   double worldScrollSpeed = 180.0;
 
+  // ── Thêm: lưu tên người chơi ───────────────────────────────
   String playerName = 'Người chơi';
 
+  // Cờ để tránh trigger toán lặp khi player ở gần nhà lâu
   bool _isTouchingPortal = false;
   bool _hasTriggeredMathThisTouch = false;
 
+  // Sau khi đúng toán: chờ vượt qua ít nhất X bụi cỏ mới lên level
   bool _waitingForBushesAfterMath = false;
   int _bushesPassedAfterMath = 0;
   final int _requiredBushesAfterMath = 3;
   final double _bushPassThreshold = -200.0;
 
   @override
-  Color backgroundColor() => const Color(0xFF34495E);
+  Color backgroundColor() => const Color(0xFF1A2A3F);
 
   @override
   void onGameResize(Vector2 gameSize) {
@@ -152,8 +155,8 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     );
     add(timerText);
 
-    // Hiển thị tên người chơi (tạo component và lưu lại để update sau)
-    nameDisplay = TextComponent(
+    // ── Thêm: hiển thị tên người chơi ở góc trên trái ───────
+    final nameDisplay = TextComponent(
       text: 'Người chơi: $playerName',
       position: Vector2(20, 40),
       anchor: Anchor.topLeft,
@@ -188,15 +191,6 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     worldScrollSpeed = 160.0 + (level - 3).clamp(0, 999) * 22.0;
 
     print('Level $level loaded - bushes: ${bushes.length} - speed: $worldScrollSpeed');
-  }
-
-  // Hàm cập nhật tên người chơi và text hiển thị
-  void updatePlayerName(String newName) {
-    playerName = newName;
-    if (nameDisplay.isMounted) {
-      nameDisplay.text = 'Người chơi: $playerName';
-      print('Đã cập nhật tên hiển thị: $playerName');
-    }
   }
 
   double getLevelTime(int level) => 75.0 - (level - 1) * 5.0;
@@ -375,13 +369,13 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     _waitingForBushesAfterMath = false;
     _bushesPassedAfterMath = 0;
 
-    // Giữ nguyên tên cũ khi chơi lại (không reset về mặc định)
-    // Nếu muốn hỏi tên lại mỗi lần chơi lại thì giữ overlays.add('StartScreen');
-
+    // Khi chơi lại → hiển thị lại màn hình nhập tên (tùy chọn)
+    // Nếu không muốn hỏi lại tên mỗi lần chơi lại → comment 2 dòng dưới
     overlays.add('StartScreen');
     pauseEngine();
 
     await loadLevel(1);
+    // resumeEngine();  // sẽ được gọi khi nhấn "Chơi" ở StartScreen
   }
 
   void startMathChallenge() {
@@ -550,7 +544,7 @@ class _StartScreenOverlayState extends State<StartScreenOverlay> {
                     return;
                   }
 
-                  widget.game.updatePlayerName(name); // ← Cập nhật tên và text hiển thị ngay lập tức
+                  widget.game.playerName = name;
                   widget.game.overlays.remove('StartScreen');
                   widget.game.resumeEngine();
                 },
@@ -578,7 +572,10 @@ class _StartScreenOverlayState extends State<StartScreenOverlay> {
   }
 }
 
-// Các class còn lại giữ nguyên (Player, Bush, ExitPortal, HudButton, MathChallenge, MathChallengeOverlay, PauseMenuOverlay, GameOverOverlay)
+// ────────────────────────────────────────────────
+//                  CÁC CLASS CŨ GIỮ NGUYÊN
+// ────────────────────────────────────────────────
+
 class Player extends SpriteComponent with CollisionCallbacks {
   CircleHitbox? hitbox;
   double velocityY = 0.0;
