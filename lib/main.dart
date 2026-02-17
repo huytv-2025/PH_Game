@@ -21,7 +21,6 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final game = MazeGame();
 
-    // Tự động hiển thị màn hình bắt đầu ngay sau khi game được tạo
     WidgetsBinding.instance.addPostFrameCallback((_) {
       game.overlays.add('StartScreen');
       game.pauseEngine();
@@ -44,7 +43,7 @@ class MyApp extends StatelessWidget {
           'GameOver': (context, game) => GameOverOverlay(game: game),
           'PauseMenu': (context, game) => PauseMenuOverlay(game: game),
           'MathChallenge': (context, game) => MathChallengeOverlay(game: game),
-          'StartScreen': (context, game) => StartScreenOverlay(game: game),  // ← sửa ở đây
+          'StartScreen': (context, game) => StartScreenOverlay(game: game),
         },
       ),
     );
@@ -54,13 +53,12 @@ class MyApp extends StatelessWidget {
 class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   Player? player;
   late TextComponent levelText;
-  late TextComponent timerText;
+  TextComponent? nameDisplay; // Làm thành biến để có thể remove khi reload
   HudButton? pauseButton;
 
   int currentLevel = 1;
   final int maxLevel = 10;
   bool isGameOver = false;
-  double levelTimeLeft = 70.0;
 
   final List<Bush> bushes = [];
   ExitPortal? exitPortal;
@@ -70,21 +68,18 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
   double worldScrollSpeed = 180.0;
 
-  // ── Thêm: lưu tên người chơi ───────────────────────────────
   String playerName = 'Người chơi';
 
-  // Cờ để tránh trigger toán lặp khi player ở gần nhà lâu
   bool _isTouchingPortal = false;
   bool _hasTriggeredMathThisTouch = false;
 
-  // Sau khi đúng toán: chờ vượt qua ít nhất X bụi cỏ mới lên level
   bool _waitingForBushesAfterMath = false;
   int _bushesPassedAfterMath = 0;
   final int _requiredBushesAfterMath = 3;
   final double _bushPassThreshold = -200.0;
 
   @override
-  Color backgroundColor() => const Color(0xFF1A2A3F);
+  Color backgroundColor() => const Color(0xFF0D1B2A);
 
   @override
   void onGameResize(Vector2 gameSize) {
@@ -97,10 +92,12 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   }
 
   Future<void> loadLevel(int level) async {
+    print('Bắt đầu load level $level - Tên hiện tại: $playerName');
+
     final toRemove = <Component>[];
 
     for (final c in children) {
-      if (c is Bush || c is ExitPortal || c is HudButton || c is Player) {
+      if (c is Bush || c is ExitPortal || c is HudButton || c is Player || c is TextComponent && (c.text.contains('Người chơi:') || c.text.contains('Màn'))) {
         toRemove.add(c);
       }
     }
@@ -112,6 +109,7 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     bushes.clear();
     exitPortal = null;
     pauseButton = null;
+    nameDisplay = null;
 
     pauseButton = HudButton(
       position: Vector2(size.x - 90, 90),
@@ -126,7 +124,7 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
     levelText = TextComponent(
       text: 'Màn $level / $maxLevel',
-      position: Vector2(size.x / 2, 70),
+      position: Vector2(size.x / 2, 100), // Tăng y lên để tránh bị che
       anchor: Anchor.center,
       textRenderer: TextPaint(
         style: const TextStyle(fontSize: 36, color: Colors.white, fontWeight: FontWeight.bold),
@@ -134,29 +132,8 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     );
     add(levelText);
 
-    timerText = TextComponent(
-      text: getLevelTime(level).toStringAsFixed(1),
-      position: Vector2(size.x - 40, 80),
-      anchor: Anchor.topRight,
-      textRenderer: TextPaint(
-        style: const TextStyle(
-          fontSize: 36,
-          color: Colors.yellowAccent,
-          fontWeight: FontWeight.bold,
-          shadows: [
-            Shadow(
-              blurRadius: 4.0,
-              color: Color.fromRGBO(0, 0, 0, 0.8),
-              offset: Offset(2, 2),
-            ),
-          ],
-        ),
-      ),
-    );
-    add(timerText);
-
-    // ── Thêm: hiển thị tên người chơi ở góc trên trái ───────
-    final nameDisplay = TextComponent(
+    // Hiển thị tên người chơi thực tế - add sau cùng để đảm bảo cập nhật
+    nameDisplay = TextComponent(
       text: 'Người chơi: $playerName',
       position: Vector2(20, 40),
       anchor: Anchor.topLeft,
@@ -168,7 +145,8 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
         ),
       ),
     );
-    add(nameDisplay);
+    add(nameDisplay!);
+    print('Đã add nameDisplay: Người chơi: $playerName');
 
     generateObstacles(level);
 
@@ -182,7 +160,6 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
     isGameOver = false;
     isMathChallengeActive = false;
-    levelTimeLeft = getLevelTime(level);
     _isTouchingPortal = false;
     _hasTriggeredMathThisTouch = false;
     _waitingForBushesAfterMath = false;
@@ -192,8 +169,6 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
     print('Level $level loaded - bushes: ${bushes.length} - speed: $worldScrollSpeed');
   }
-
-  double getLevelTime(int level) => 75.0 - (level - 1) * 5.0;
 
   void generateObstacles(int level) {
     final random = math.Random();
@@ -222,14 +197,6 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
     if (isGameOver || isMathChallengeActive) return;
 
-    levelTimeLeft -= dt;
-    timerText.text = levelTimeLeft.toStringAsFixed(1);
-
-    if (levelTimeLeft <= 0) {
-      gameOver();
-      return;
-    }
-
     bool shouldAddMoreBushes = false;
 
     for (final bush in bushes) {
@@ -240,8 +207,6 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
           if (!bush.hasBeenPassedAfterMath) {
             bush.hasBeenPassedAfterMath = true;
             _bushesPassedAfterMath++;
-            print('Đã qua bụi thứ $_bushesPassedAfterMath / $_requiredBushesAfterMath sau toán');
-
             if (_bushesPassedAfterMath >= _requiredBushesAfterMath) {
               _waitingForBushesAfterMath = false;
               _bushesPassedAfterMath = 0;
@@ -249,9 +214,6 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
               final extraSpeed = (currentLevel >= 4) ? 18.0 + (currentLevel - 3) * 8.0 : 0.0;
               worldScrollSpeed += extraSpeed;
               levelText.text = 'Màn $currentLevel / $maxLevel';
-              levelTimeLeft = getLevelTime(currentLevel);
-              print('Hoàn thành! Level lên $currentLevel - Tốc độ mới: $worldScrollSpeed');
-
               shouldAddMoreBushes = true;
             }
           }
@@ -265,9 +227,7 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
       }
     }
 
-    if (shouldAddMoreBushes) {
-      addMoreBushes();
-    }
+    if (shouldAddMoreBushes) addMoreBushes();
 
     if (exitPortal != null) {
       exitPortal!.position.x -= worldScrollSpeed * 0.45 * dt;
@@ -285,12 +245,10 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
           if (!_isTouchingPortal) {
             _isTouchingPortal = true;
             _hasTriggeredMathThisTouch = false;
-            print('Player vừa chạm nhà');
           }
 
           if (currentLevel % 3 == 0 && currentLevel < maxLevel) {
             if (!_hasTriggeredMathThisTouch) {
-              print('Trigger toán cho level $currentLevel');
               startMathChallenge();
               _hasTriggeredMathThisTouch = true;
             }
@@ -299,23 +257,16 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
             final extraSpeed = (currentLevel >= 4) ? 18.0 + (currentLevel - 3) * 8.0 : 0.0;
             worldScrollSpeed += extraSpeed;
             levelText.text = 'Màn $currentLevel / $maxLevel';
-            levelTimeLeft = getLevelTime(currentLevel);
-            print('Level up thông thường → $currentLevel - speed: $worldScrollSpeed');
             shouldAddMoreBushes = true;
           }
         } else {
-          if (_isTouchingPortal) {
-            print('Player rời nhà');
-          }
           _isTouchingPortal = false;
           _hasTriggeredMathThisTouch = false;
         }
       }
     }
 
-    if (shouldAddMoreBushes) {
-      addMoreBushes();
-    }
+    if (shouldAddMoreBushes) addMoreBushes();
 
     player?.applyPhysics(dt);
   }
@@ -335,15 +286,12 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
       bushes.add(bush1);
       bushes.add(bush2);
-
-      toAdd.add(bush1);
-      toAdd.add(bush2);
+      toAdd.addAll([bush1, bush2]);
 
       lastX = x;
     }
 
     addAll(toAdd);
-    print('Đã thêm ${toAdd.length} bụi mới');
   }
 
   @override
@@ -369,13 +317,12 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     _waitingForBushesAfterMath = false;
     _bushesPassedAfterMath = 0;
 
-    // Khi chơi lại → hiển thị lại màn hình nhập tên (tùy chọn)
-    // Nếu không muốn hỏi lại tên mỗi lần chơi lại → comment 2 dòng dưới
-    overlays.add('StartScreen');
-    pauseEngine();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      overlays.add('StartScreen');
+      pauseEngine();
+    });
 
     await loadLevel(1);
-    // resumeEngine();  // sẽ được gọi khi nhấn "Chơi" ở StartScreen
   }
 
   void startMathChallenge() {
@@ -437,7 +384,6 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
         overlays.remove('MathChallenge');
         _waitingForBushesAfterMath = true;
         _bushesPassedAfterMath = 0;
-        print('Đúng toán! Chờ qua $_requiredBushesAfterMath bụi để tăng level.');
       },
       onWrong: () {
         gameOver();
@@ -448,10 +394,7 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   }
 }
 
-// ────────────────────────────────────────────────
-//                  START SCREEN
-// ────────────────────────────────────────────────
-
+// StartScreenOverlay (giữ nguyên)
 class StartScreenOverlay extends StatefulWidget {
   final MazeGame game;
 
@@ -474,7 +417,7 @@ class _StartScreenOverlayState extends State<StartScreenOverlay> {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Color.fromRGBO(0, 0, 0, 0.88),
+      color: Colors.black.withAlpha(225),
       child: Center(
         child: Container(
           padding: const EdgeInsets.all(40),
@@ -547,6 +490,7 @@ class _StartScreenOverlayState extends State<StartScreenOverlay> {
                   widget.game.playerName = name;
                   widget.game.overlays.remove('StartScreen');
                   widget.game.resumeEngine();
+                  print('Tên đã cập nhật: $name');
                 },
                 child: const Text(
                   'CHƠI NGAY',
@@ -572,9 +516,8 @@ class _StartScreenOverlayState extends State<StartScreenOverlay> {
   }
 }
 
-// ────────────────────────────────────────────────
-//                  CÁC CLASS CŨ GIỮ NGUYÊN
-// ────────────────────────────────────────────────
+// Các class còn lại (Player, Bush, ExitPortal, HudButton, MathChallenge, MathChallengeOverlay, PauseMenuOverlay, GameOverOverlay) giữ nguyên như code cũ của bạn
+// Copy phần còn lại từ code bạn gửi trước đó vào đây
 
 class Player extends SpriteComponent with CollisionCallbacks {
   CircleHitbox? hitbox;
@@ -588,7 +531,7 @@ class Player extends SpriteComponent with CollisionCallbacks {
   @override
   Future<void> onLoad() async {
     try {
-      sprite = await Sprite.load('pngtree-cute-penguin-ski-illustration-png-image_5472693.png');
+      sprite = await Sprite.load('pngtree-penguin-skiing-vector-png-image_12156156.png');
     } catch (e) {
       print('Không load được chim: $e');
       paint = Paint()..color = Colors.yellow;
@@ -726,66 +669,80 @@ class _MathChallengeOverlayState extends State<MathChallengeOverlay> {
 
     return Material(
       color: Colors.black.withAlpha(210),
-      child: Center(
-        child: Container(
-          padding: const EdgeInsets.all(36),
-          decoration: BoxDecoration(
-            color: Colors.indigo.shade900,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.yellowAccent, width: 4),
-          ),
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('GIẢI PHÉP TÍNH',
-                  style: TextStyle(fontSize: 52, color: Colors.yellow, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 32),
-              Text(challenge.question,
-                  style: const TextStyle(fontSize: 80, color: Colors.white, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 40),
-              TextField(
-                controller: _controller,
-                keyboardType: TextInputType.number,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 48, color: Colors.white),
-                decoration: const InputDecoration(
-                  hintText: 'Nhập kết quả',
-                  hintStyle: TextStyle(color: Colors.white60),
-                  filled: true,
-                  fillColor: Colors.black26,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
-                ),
-                autofocus: true,
+      child: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              reverse: true,
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom + 40,
               ),
-              const SizedBox(height: 20),
-              if (errorMessage.isNotEmpty)
-                Text(errorMessage, style: const TextStyle(fontSize: 24, color: Colors.redAccent)),
-              const SizedBox(height: 30),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 80, vertical: 20),
-                  backgroundColor: Colors.green,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.all(36),
+                  constraints: BoxConstraints(maxWidth: 420, minWidth: 320),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.shade900,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.yellowAccent, width: 4),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('GIẢI PHÉP TÍNH',
+                          style: TextStyle(fontSize: 52, color: Colors.yellow, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 32),
+                      Text(challenge.question,
+                          style: const TextStyle(fontSize: 80, color: Colors.white, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 40),
+                      TextField(
+                        controller: _controller,
+                        keyboardType: TextInputType.number,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 48, color: Colors.white),
+                        decoration: const InputDecoration(
+                          hintText: 'Nhập kết quả',
+                          hintStyle: TextStyle(color: Colors.white60),
+                          filled: true,
+                          fillColor: Colors.black26,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                        ),
+                        autofocus: true,
+                      ),
+                      const SizedBox(height: 20),
+                      if (errorMessage.isNotEmpty)
+                        Text(errorMessage, style: const TextStyle(fontSize: 24, color: Colors.redAccent)),
+                      const SizedBox(height: 30),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 80, vertical: 20),
+                          backgroundColor: Colors.green,
+                        ),
+                        onPressed: () {
+                          final input = int.tryParse(_controller.text.trim());
+                          if (input == challenge.correctAnswer) {
+                            challenge.onCorrect();
+                          } else {
+                            setState(() {
+                              errorMessage = 'Sai rồi! Kết quả đúng là ${challenge.correctAnswer}';
+                            });
+                            Future.delayed(const Duration(seconds: 2), () {
+                              challenge.onWrong();
+                            });
+                          }
+                        },
+                        child: const Text('Kiểm tra', style: TextStyle(fontSize: 40)),
+                      ),
+                      const SizedBox(height: 20),
+                      const Text('Nhập số và nhấn kiểm tra!',
+                          style: TextStyle(fontSize: 24, color: Colors.orangeAccent)),
+                      const SizedBox(height: 40),
+                    ],
+                  ),
                 ),
-                onPressed: () {
-                  final input = int.tryParse(_controller.text.trim());
-                  if (input == challenge.correctAnswer) {
-                    challenge.onCorrect();
-                  } else {
-                    setState(() {
-                      errorMessage = 'Sai rồi! Kết quả đúng là ${challenge.correctAnswer}';
-                    });
-                    Future.delayed(const Duration(seconds: 2), () {
-                      challenge.onWrong();
-                    });
-                  }
-                },
-                child: const Text('Kiểm tra', style: TextStyle(fontSize: 40)),
               ),
-              const SizedBox(height: 20),
-              const Text('Nhập số và nhấn kiểm tra!', style: TextStyle(fontSize: 24, color: Colors.orangeAccent)),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -815,7 +772,9 @@ class PauseMenuOverlay extends StatelessWidget {
             const SizedBox(height: 60),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 90, vertical: 28), backgroundColor: Colors.blue),
+                padding: const EdgeInsets.symmetric(horizontal: 90, vertical: 28),
+                backgroundColor: Colors.blue,
+              ),
               onPressed: () {
                 game.overlays.remove('PauseMenu');
                 game.resumeEngine();
@@ -825,7 +784,9 @@ class PauseMenuOverlay extends StatelessWidget {
             const SizedBox(height: 28),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 90, vertical: 28), backgroundColor: Colors.orange),
+                padding: const EdgeInsets.symmetric(horizontal: 90, vertical: 28),
+                backgroundColor: Colors.orange,
+              ),
               onPressed: () async {
                 game.overlays.remove('PauseMenu');
                 await game.restartGame();
@@ -855,12 +816,14 @@ class GameOverOverlay extends StatelessWidget {
             const Text('GAME OVER',
                 style: TextStyle(fontSize: 72, color: Colors.redAccent, fontWeight: FontWeight.bold)),
             const SizedBox(height: 28),
-            const Text('Đụng bụi, hết thời gian hoặc sai toán!',
+            const Text('Đụng bụi hoặc sai toán!',
                 style: TextStyle(fontSize: 32, color: Colors.white70)),
             const SizedBox(height: 60),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 80, vertical: 28), backgroundColor: Colors.orange),
+                padding: const EdgeInsets.symmetric(horizontal: 80, vertical: 28),
+                backgroundColor: Colors.orange,
+              ),
               onPressed: () => game.restartGame(),
               child: const Text('Chơi lại', style: TextStyle(fontSize: 40)),
             ),
