@@ -431,7 +431,7 @@ class _StartScreenOverlayState extends State<StartScreenOverlay> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
-                'CHIM VÀNG BAY QUA RỪNG',
+                'Giải trí ngày tết',
                 style: TextStyle(
                   fontSize: 48,
                   color: Colors.yellow,
@@ -673,9 +673,9 @@ class _MathChallengeOverlayState extends State<MathChallengeOverlay> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             return SingleChildScrollView(
-              reverse: true,
+              reverse: true,  // Quan trọng: scroll xuống dưới khi bàn phím mở
               padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom + 40,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 40,  // Padding bằng chiều cao bàn phím + dư chút
               ),
               child: Center(
                 child: Container(
@@ -689,11 +689,15 @@ class _MathChallengeOverlayState extends State<MathChallengeOverlay> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text('GIẢI PHÉP TÍNH',
-                          style: TextStyle(fontSize: 52, color: Colors.yellow, fontWeight: FontWeight.bold)),
+                      const Text(
+                        'GIẢI PHÉP TÍNH',
+                        style: TextStyle(fontSize: 52, color: Colors.yellow, fontWeight: FontWeight.bold),
+                      ),
                       const SizedBox(height: 32),
-                      Text(challenge.question,
-                          style: const TextStyle(fontSize: 80, color: Colors.white, fontWeight: FontWeight.bold)),
+                      Text(
+                        challenge.question,
+                        style: const TextStyle(fontSize: 80, color: Colors.white, fontWeight: FontWeight.bold),
+                      ),
                       const SizedBox(height: 40),
                       TextField(
                         controller: _controller,
@@ -734,9 +738,11 @@ class _MathChallengeOverlayState extends State<MathChallengeOverlay> {
                         child: const Text('Kiểm tra', style: TextStyle(fontSize: 40)),
                       ),
                       const SizedBox(height: 20),
-                      const Text('Nhập số và nhấn kiểm tra!',
-                          style: TextStyle(fontSize: 24, color: Colors.orangeAccent)),
-                      const SizedBox(height: 40),
+                      const Text(
+                        'Nhập số và nhấn kiểm tra!',
+                        style: TextStyle(fontSize: 24, color: Colors.orangeAccent),
+                      ),
+                      const SizedBox(height: 40),  // Padding dưới cùng để đẹp hơn
                     ],
                   ),
                 ),
