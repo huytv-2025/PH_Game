@@ -374,7 +374,7 @@ class ExitPortal extends SpriteComponent {
   @override
   Future<void> onLoad() async {
     try {
-      sprite = await Sprite.load('house.png');
+      sprite = await Sprite.load('pngtree-cute-penguin-ski-illustration-png-image_5472693.png');
     } catch (e) {
       print('Không load house: $e');
       paint = Paint()..color = Colors.brown;

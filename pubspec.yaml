@@ -41,7 +41,7 @@ flutter:
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
-  image_path: "assets/images/game.jpg"    # ← sửa đường dẫn thành đúng vị trí file
+  image_path: "assets/images/pngtree-cute-penguin-ski-illustration-png-image_5472693.jpg"    # ← sửa đường dẫn thành đúng vị trí file
   remove_alpha_ios: true
   adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "assets/images/game.jpg"
