@@ -25,7 +25,9 @@ dev_dependencies:
 
 
 flutter:
+  # Các assets (hình ảnh và âm thanh)
   assets:
+    # Images
     - assets/images/yellowbird-midflap.png
     - assets/images/tuabin.png
     - assets/images/phitieu.png
@@ -35,9 +37,12 @@ flutter:
     - assets/images/giphy.png
     - assets/images/pngtree-cute-penguin-ski-illustration-png-image_5472693.png
     - assets/images/pngtree-penguin-skiing-vector-png-image_12156156.png
-    
 
-        # Thêm phần này để tạo icon
+    # Audio
+    - assets/audio/game_over_deep_voice.mp3
+    - assets/audio/clinking_coins.mp3
+    - assets/audio/simple_whoosh.mp3
+
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true

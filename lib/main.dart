@@ -4,6 +4,7 @@ import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flame/events.dart';
 import 'package:flame/game.dart';
+import 'package:flame_audio/flame_audio.dart'; // ← Đã thêm để dùng âm thanh
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -66,9 +67,24 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   final List<Bush> bushes = [];
   final List<ExitPortal> portals = [];
 
-  double worldScrollSpeed = 170.0;
+  double worldScrollSpeed = 180.0;
 
   String playerName = 'Người chơi';
+
+  @override
+  Future<void> onLoad() async {
+    super.onLoad();
+
+    // Preload tất cả âm thanh để tránh lag khi phát lần đầu
+    await FlameAudio.audioCache.loadAll([
+      'game_over_deep_voice.mp3',
+      'clinking_coins.mp3',
+      'simple_whoosh.mp3',
+    ]);
+
+    // (Tùy chọn) Nếu muốn có nhạc nền loop suốt game, thêm dòng này:
+    // FlameAudio.bgm.play('audio/your_background_music.mp3', volume: 0.4);
+  }
 
   @override
   Color backgroundColor() => const Color(0xFF0D1B2A);
@@ -88,8 +104,11 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
     final toRemove = <Component>[];
     for (final c in children) {
-      if (c is Bush || c is ExitPortal || c is Player ||
-          (c is TextComponent && (c.text.contains('Người chơi:') || c.text.contains('Màn')))) {
+      if (c is Bush ||
+          c is ExitPortal ||
+          c is Player ||
+          (c is TextComponent &&
+              (c.text.contains('Người chơi:') || c.text.contains('Màn')))) {
         toRemove.add(c);
       }
     }
@@ -115,7 +134,8 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
       position: Vector2(size.x / 2, 100),
       anchor: Anchor.center,
       textRenderer: TextPaint(
-        style: const TextStyle(fontSize: 36, color: Colors.white, fontWeight: FontWeight.bold),
+        style: const TextStyle(
+            fontSize: 36, color: Colors.white, fontWeight: FontWeight.bold),
       ),
     );
     add(levelText);
@@ -125,7 +145,8 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
       position: Vector2(20, 40),
       anchor: Anchor.topLeft,
       textRenderer: TextPaint(
-        style: const TextStyle(fontSize: 28, color: Colors.cyanAccent, fontWeight: FontWeight.w600),
+        style: const TextStyle(
+            fontSize: 28, color: Colors.cyanAccent, fontWeight: FontWeight.w600),
       ),
     );
     add(nameDisplay!);
@@ -139,10 +160,11 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
     isGameOver = false;
 
-    worldScrollSpeed = 170.0 + (level - 1) * 14.0;
-    if (level >= 7) worldScrollSpeed += (level - 6) * 6.0;
+    worldScrollSpeed = 180.0 + (level - 1) * 12.0;
+    worldScrollSpeed = worldScrollSpeed.clamp(180.0, 340.0);
 
-    print('Level $level - bushes: ${bushes.length} - portals: ${portals.length} - speed: $worldScrollSpeed');
+    print(
+        'Level $level - bushes: ${bushes.length} - portals: ${portals.length} - speed: $worldScrollSpeed');
   }
 
   void generateObstacles(int level) {
@@ -159,7 +181,8 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
       bushes.add(Bush(Vector2(x, gapY + gapSize / 2 + 90)));
 
       if (level >= 4 && random.nextDouble() < 0.6) {
-        bushes.add(Bush(Vector2(x + spacing / 2, gapY + random.nextDouble() * 120 - 60)));
+        bushes.add(Bush(
+            Vector2(x + spacing / 2, gapY + random.nextDouble() * 120 - 60)));
       }
     }
 
@@ -244,6 +267,9 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
     addMoreBushes();
 
+    // Phát âm thanh "ăn" (qua portal) - clinking coins
+    FlameAudio.play('clinking_coins.mp3', volume: 0.85);
+
     print('Đạt nhà → Level $currentLevel | Speed: $worldScrollSpeed | High: $highScore');
   }
 
@@ -280,7 +306,10 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     if (isGameOver) return;
     isGameOver = true;
 
-    _lastReachedLevel = currentLevel; // Lưu màn chơi lúc thua
+    _lastReachedLevel = currentLevel;
+
+    // Phát âm thanh thua - giọng nam trầm "Game Over"
+    FlameAudio.play('game_over_deep_voice.mp3', volume: 1.0);
 
     pauseEngine();
     overlays.add('GameOver');
@@ -289,7 +318,7 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   Future<void> restartGame() async {
     currentLevel = 1;
     worldScrollSpeed = 170.0;
-    _lastReachedLevel = null; // Reset biến tạm
+    _lastReachedLevel = null;
     overlays.removeAll(['GameOver', 'PauseMenu']);
     await loadLevel(currentLevel);
     resumeEngine();
@@ -319,6 +348,9 @@ class Player extends SpriteComponent with CollisionCallbacks {
 
   void jump() {
     velocityY = jumpForce;
+
+    // Phát âm thanh bay/vỗ cánh - simple whoosh mỗi lần nhảy
+    FlameAudio.play('simple_whoosh.mp3', volume: 0.7);
   }
 
   void applyPhysics(double dt) {
@@ -395,7 +427,8 @@ class HudButton extends PositionComponent with TapCallbacks {
     icon = TextComponent(
       text: '⏸',
       textRenderer: TextPaint(
-        style: const TextStyle(fontSize: 48, color: Colors.white70, fontWeight: FontWeight.bold),
+        style: const TextStyle(
+            fontSize: 48, color: Colors.white70, fontWeight: FontWeight.bold),
       ),
       anchor: Anchor.center,
       position: size / 2,
@@ -465,7 +498,7 @@ class _StartScreenOverlayState extends State<StartScreenOverlay> {
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 32, color: Colors.white),
                 decoration: InputDecoration(
-                  hintText: 'Tên người chơi',
+                  hintText: '',
                   hintStyle: const TextStyle(color: Colors.white54),
                   filled: true,
                   fillColor: Colors.black38,
@@ -537,11 +570,16 @@ class PauseMenuOverlay extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('TẠM DỪNG', style: TextStyle(fontSize: 64, color: Colors.white, fontWeight: FontWeight.bold)),
+            const Text('TẠM DỪNG',
+                style: TextStyle(
+                    fontSize: 64,
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold)),
             const SizedBox(height: 60),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 90, vertical: 28),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 90, vertical: 28),
                 backgroundColor: Colors.blue,
               ),
               onPressed: () {
@@ -553,7 +591,8 @@ class PauseMenuOverlay extends StatelessWidget {
             const SizedBox(height: 28),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 90, vertical: 28),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 90, vertical: 28),
                 backgroundColor: Colors.orange,
               ),
               onPressed: () async {
@@ -630,10 +669,12 @@ class GameOverOverlay extends StatelessWidget {
                 children: [
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 50, vertical: 20),
                       backgroundColor: Colors.green.shade700,
                       minimumSize: const Size(140, 70),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
                     ),
                     onPressed: () {
                       game.overlays.remove('GameOver');
@@ -641,15 +682,18 @@ class GameOverOverlay extends StatelessWidget {
                     },
                     child: const Text(
                       'CÓ',
-                      style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
+                      style:
+                          TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
                     ),
                   ),
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 50, vertical: 20),
                       backgroundColor: Colors.red.shade700,
                       minimumSize: const Size(140, 70),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
                     ),
                     onPressed: () {
                       game.overlays.remove('GameOver');
@@ -657,7 +701,8 @@ class GameOverOverlay extends StatelessWidget {
                     },
                     child: const Text(
                       'KHÔNG',
-                      style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
+                      style:
+                          TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
                     ),
                   ),
                 ],
