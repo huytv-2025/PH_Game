@@ -4,7 +4,7 @@ import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flame/events.dart';
 import 'package:flame/game.dart';
-import 'package:flame_audio/flame_audio.dart'; // ← Đã thêm để dùng âm thanh
+import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -60,9 +60,9 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   final int maxLevel = 10;
   bool isGameOver = false;
 
-  static int highScore = 1; // Lưu màn cao nhất
+  static int highScore = 1;
 
-  int? _lastReachedLevel; // Biến tạm lưu màn chơi lúc thua
+  int? _lastReachedLevel;
 
   final List<Bush> bushes = [];
   final List<ExitPortal> portals = [];
@@ -75,15 +75,24 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   Future<void> onLoad() async {
     super.onLoad();
 
-    // Preload tất cả âm thanh để tránh lag khi phát lần đầu
+  // Khởi tạo BGM trước khi load audio
+    await FlameAudio.bgm.initialize();   // ← Thêm dòng này (rất quan trọng!)
+    FlameAudio.bgm.play('happy_adveture.mp3', volume: 0.6);
     await FlameAudio.audioCache.loadAll([
       'game_over_deep_voice.mp3',
       'clinking_coins.mp3',
       'simple_whoosh.mp3',
+      'happy_adveture.mp3',
     ]);
+  }
 
-    // (Tùy chọn) Nếu muốn có nhạc nền loop suốt game, thêm dòng này:
-    // FlameAudio.bgm.play('audio/your_background_music.mp3', volume: 0.4);
+  void startBackgroundMusic() {
+    FlameAudio.bgm.stop();
+    FlameAudio.bgm.play('happy_adveture.mp3', volume: 0.8);
+  }
+
+  void stopBackgroundMusic() {
+    FlameAudio.bgm.stop();
   }
 
   @override
@@ -169,20 +178,38 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
   void generateObstacles(int level) {
     final random = math.Random();
+
+    // Khoảng cách giữa các cột bụi cây giảm dần theo level
     final double spacing = 340.0 - level * 18.0;
-    double gapSize = 240.0 - (level * 12.0).clamp(0.0, 140.0);
+
+    // Gap tối thiểu để luôn có đường đi (đủ cho chim bay qua)
+    final double minGapHeight = 220.0 - level * 12.0; // giảm dần nhưng không nhỏ hơn 140
+    final double safeGap = minGapHeight.clamp(140.0, 220.0);
+
+    // Margin an toàn từ mép trên/dưới màn hình
+    final double safeMargin = 80.0;
+
     int columns = (size.x / spacing).ceil() + 6 + level;
 
     for (int i = 0; i < columns; i++) {
       double x = size.x + i * spacing + random.nextDouble() * 120;
-      double gapY = 120 + random.nextDouble() * (size.y - 240 - gapSize);
 
-      bushes.add(Bush(Vector2(x, gapY - gapSize / 2 - 90)));
-      bushes.add(Bush(Vector2(x, gapY + gapSize / 2 + 90)));
+      // Random vị trí gap nhưng luôn đảm bảo đủ lớn và không sát mép
+      double gapY = safeMargin +
+          random.nextDouble() * (size.y - safeMargin * 2 - safeGap);
 
-      if (level >= 4 && random.nextDouble() < 0.6) {
-        bushes.add(Bush(
-            Vector2(x + spacing / 2, gapY + random.nextDouble() * 120 - 60)));
+      // Bush trên
+      bushes.add(Bush(Vector2(x, gapY - safeGap / 2 - 90)));
+
+      // Bush dưới
+      bushes.add(Bush(Vector2(x, gapY + safeGap / 2 + 90)));
+
+      // Thêm bush phụ ở giữa (level cao hơn) nhưng không chặn hết đường đi
+      if (level >= 4 && random.nextDouble() < 0.5) {
+        double midY = gapY + random.nextDouble() * (safeGap * 0.6) - (safeGap * 0.3);
+        if ((midY - gapY).abs() > 100) { // tránh chặn quá gần gap chính
+          bushes.add(Bush(Vector2(x + spacing / 2, midY)));
+        }
       }
     }
 
@@ -236,7 +263,7 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
         final distance = player!.position.distanceTo(portal.position);
         if (distance < 100) {
           onReachPortal();
-          portal.position.x += 800; // tránh trigger liên tục
+          portal.position.x += 800;
         }
       }
     }
@@ -267,7 +294,6 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
     addMoreBushes();
 
-    // Phát âm thanh "ăn" (qua portal) - clinking coins
     FlameAudio.play('clinking_coins.mp3', volume: 0.85);
 
     print('Đạt nhà → Level $currentLevel | Speed: $worldScrollSpeed | High: $highScore');
@@ -308,8 +334,8 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
     _lastReachedLevel = currentLevel;
 
-    // Phát âm thanh thua - giọng nam trầm "Game Over"
     FlameAudio.play('game_over_deep_voice.mp3', volume: 1.0);
+    stopBackgroundMusic();
 
     pauseEngine();
     overlays.add('GameOver');
@@ -322,8 +348,12 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     overlays.removeAll(['GameOver', 'PauseMenu']);
     await loadLevel(currentLevel);
     resumeEngine();
+    startBackgroundMusic();
   }
 }
+
+// Các class còn lại (Player, Bush, ExitPortal, HudButton, StartScreenOverlay, PauseMenuOverlay, GameOverOverlay)
+// Giữ nguyên như code cũ của bạn - không cần thay đổi
 
 class Player extends SpriteComponent with CollisionCallbacks {
   CircleHitbox? hitbox;
@@ -348,8 +378,6 @@ class Player extends SpriteComponent with CollisionCallbacks {
 
   void jump() {
     velocityY = jumpForce;
-
-    // Phát âm thanh bay/vỗ cánh - simple whoosh mỗi lần nhảy
     FlameAudio.play('simple_whoosh.mp3', volume: 0.7);
   }
 
@@ -532,6 +560,7 @@ class _StartScreenOverlayState extends State<StartScreenOverlay> {
                   widget.game.playerName = name;
                   widget.game.overlays.remove('StartScreen');
                   widget.game.resumeEngine();
+                  widget.game.startBackgroundMusic();
                 },
                 child: const Text(
                   'CHƠI NGAY',

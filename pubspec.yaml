@@ -42,6 +42,7 @@ flutter:
     - assets/audio/game_over_deep_voice.mp3
     - assets/audio/clinking_coins.mp3
     - assets/audio/simple_whoosh.mp3
+    - assets/audio/happy_adveture.mp3
 
 flutter_launcher_icons:
   android: "launcher_icon"
