@@ -1,9 +1,9 @@
 import 'dart:math' as math;
-
 import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flame/events.dart';
 import 'package:flame/game.dart';
+import 'package:flame/input.dart';
 import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,12 +21,10 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final game = MazeGame();
-
     WidgetsBinding.instance.addPostFrameCallback((_) {
       game.overlays.add('StartScreen');
       game.pauseEngine();
     });
-
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       localizationsDelegates: const [
@@ -50,34 +48,43 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
+class MazeGame extends FlameGame 
+    with 
+      HasCollisionDetection, 
+      TapCallbacks, 
+      HasKeyboardHandlerComponents
+     
+{
   Player? player;
   late TextComponent levelText;
   TextComponent? nameDisplay;
+  TextComponent? powerDisplay;
   HudButton? pauseButton;
+  ShootButton? shootButton;
 
   int currentLevel = 1;
   final int maxLevel = 10;
   bool isGameOver = false;
-
   static int highScore = 1;
-
   int? _lastReachedLevel;
 
   final List<Bush> bushes = [];
   final List<ExitPortal> portals = [];
 
   double worldScrollSpeed = 180.0;
-
   String playerName = 'Người chơi';
+
+  int powerCollected = 0;
+  bool isShootingMode = false;
+  double shootingTimer = 0.0;
+  final double shootingDuration = 12.0;
 
   @override
   Future<void> onLoad() async {
     super.onLoad();
-
-  // Khởi tạo BGM trước khi load audio
-    await FlameAudio.bgm.initialize();   // ← Thêm dòng này (rất quan trọng!)
+    await FlameAudio.bgm.initialize();
     FlameAudio.bgm.play('happy_adveture.mp3', volume: 0.6);
+
     await FlameAudio.audioCache.loadAll([
       'game_over_deep_voice.mp3',
       'clinking_coins.mp3',
@@ -102,7 +109,6 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   void onGameResize(Vector2 gameSize) {
     super.onGameResize(gameSize);
     if (size.isZero()) return;
-
     if (currentLevel == 1 && bushes.isEmpty) {
       loadLevel(1);
     }
@@ -115,9 +121,13 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     for (final c in children) {
       if (c is Bush ||
           c is ExitPortal ||
+          c is BigPenguin ||
           c is Player ||
+          c is ShootButton ||
           (c is TextComponent &&
-              (c.text.contains('Người chơi:') || c.text.contains('Màn')))) {
+              (c.text.contains('Người chơi:') ||
+                  c.text.contains('Màn') ||
+                  c.text.contains('Power')))) {
         toRemove.add(c);
       }
     }
@@ -126,6 +136,8 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     bushes.clear();
     portals.clear();
     nameDisplay = null;
+    powerDisplay = null;
+    shootButton = null;
 
     pauseButton = HudButton(
       position: Vector2(size.x - 90, 90),
@@ -137,6 +149,18 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
       },
     );
     add(pauseButton!);
+
+    shootButton = ShootButton(
+      position: Vector2(size.x - 100, size.y - 120),
+      onPressed: () {
+        if (isShootingMode && player != null && !isGameOver) {
+          final bullet = Bullet(player!.position.clone() + Vector2(50, 0));
+          add(bullet);
+          FlameAudio.play('simple_whoosh.mp3', volume: 0.5);
+        }
+      },
+    );
+    add(shootButton!);
 
     levelText = TextComponent(
       text: 'Màn $level / $maxLevel',
@@ -160,17 +184,35 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     );
     add(nameDisplay!);
 
+    powerDisplay = TextComponent(
+      text: 'Power: 0/3',
+      position: Vector2(20, 80),
+      anchor: Anchor.topLeft,
+      textRenderer: TextPaint(
+        style: const TextStyle(
+          fontSize: 26,
+          color: Colors.limeAccent,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+    add(powerDisplay!);
+
     generateObstacles(level);
     generatePortals(level);
+    generatePowerPenguins(level);
 
     player = Player(position: Vector2(180, size.y / 2));
     await player!.onLoad();
     add(player!);
 
     isGameOver = false;
-
     worldScrollSpeed = 180.0 + (level - 1) * 12.0;
     worldScrollSpeed = worldScrollSpeed.clamp(180.0, 340.0);
+
+    powerCollected = 0;
+    isShootingMode = false;
+    shootingTimer = 0;
 
     print(
         'Level $level - bushes: ${bushes.length} - portals: ${portals.length} - speed: $worldScrollSpeed');
@@ -178,60 +220,58 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
   void generateObstacles(int level) {
     final random = math.Random();
-
-    // Khoảng cách giữa các cột bụi cây giảm dần theo level
     final double spacing = 340.0 - level * 18.0;
-
-    // Gap tối thiểu để luôn có đường đi (đủ cho chim bay qua)
-    final double minGapHeight = 220.0 - level * 12.0; // giảm dần nhưng không nhỏ hơn 140
+    final double minGapHeight = 220.0 - level * 12.0;
     final double safeGap = minGapHeight.clamp(140.0, 220.0);
-
-    // Margin an toàn từ mép trên/dưới màn hình
     final double safeMargin = 80.0;
 
     int columns = (size.x / spacing).ceil() + 6 + level;
 
     for (int i = 0; i < columns; i++) {
       double x = size.x + i * spacing + random.nextDouble() * 120;
-
-      // Random vị trí gap nhưng luôn đảm bảo đủ lớn và không sát mép
       double gapY = safeMargin +
           random.nextDouble() * (size.y - safeMargin * 2 - safeGap);
 
-      // Bush trên
       bushes.add(Bush(Vector2(x, gapY - safeGap / 2 - 90)));
-
-      // Bush dưới
       bushes.add(Bush(Vector2(x, gapY + safeGap / 2 + 90)));
 
-      // Thêm bush phụ ở giữa (level cao hơn) nhưng không chặn hết đường đi
       if (level >= 4 && random.nextDouble() < 0.5) {
         double midY = gapY + random.nextDouble() * (safeGap * 0.6) - (safeGap * 0.3);
-        if ((midY - gapY).abs() > 100) { // tránh chặn quá gần gap chính
+        if ((midY - gapY).abs() > 100) {
           bushes.add(Bush(Vector2(x + spacing / 2, midY)));
         }
       }
     }
-
     bushes.forEach(add);
   }
 
   void generatePortals(int level) {
     portals.clear();
-
     final random = math.Random();
     int portalCount = 2 + (level ~/ 2);
-
     double lastX = size.x + 500;
 
     for (int i = 0; i < portalCount; i++) {
       double x = lastX + 550 + random.nextDouble() * 350;
       double y = 80 + random.nextDouble() * (size.y - 160);
-
       final portal = ExitPortal(position: Vector2(x, y));
       portals.add(portal);
       add(portal);
+      lastX = x;
+    }
+  }
 
+  void generatePowerPenguins(int level) {
+    final random = math.Random();
+    int count = 1 + (level ~/ 5);
+
+    double lastX = size.x + 900 + random.nextDouble() * 400;
+
+    for (int i = 0; i < count; i++) {
+      double x = lastX + 800 + random.nextDouble() * 700;
+      double y = 120 + random.nextDouble() * (size.y - 240);
+      final powerPenguin = BigPenguin(Vector2(x, y));
+      add(powerPenguin);
       lastX = x;
     }
   }
@@ -239,12 +279,10 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   @override
   void update(double dt) {
     super.update(dt);
-
     if (isGameOver) return;
 
     for (final bush in bushes) {
       bush.position.x -= worldScrollSpeed * dt;
-
       if (bush.position.x < -150) {
         bush.position.x = size.x + 200 + math.Random().nextDouble() * 300;
         bush.position.y = 60 + math.Random().nextDouble() * (size.y - 120);
@@ -253,12 +291,10 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
     for (final portal in portals) {
       portal.position.x -= worldScrollSpeed * dt;
-
       if (portal.position.x < -200) {
         portal.position.x = size.x + 600 + math.Random().nextDouble() * 500;
         portal.position.y = 80 + math.Random().nextDouble() * (size.y - 160);
       }
-
       if (player != null) {
         final distance = player!.position.distanceTo(portal.position);
         if (distance < 100) {
@@ -269,34 +305,32 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     }
 
     player?.applyPhysics(dt);
+
+    if (isShootingMode) {
+      shootingTimer -= dt;
+      if (shootingTimer <= 0) {
+        isShootingMode = false;
+        powerCollected = 0;
+      }
+    }
+
+    if (powerDisplay != null) {
+      powerDisplay!.text =
+          'Power: $powerCollected/3${isShootingMode ? "  [BẮN ĐẠN! ${shootingTimer.toStringAsFixed(1)}s]" : ""}';
+    }
   }
 
   void onReachPortal() {
     currentLevel++;
     if (currentLevel > maxLevel) currentLevel = maxLevel;
-
-    if (currentLevel > highScore) {
-      highScore = currentLevel;
-    }
-
+    if (currentLevel > highScore) highScore = currentLevel;
     levelText.text = 'Màn $currentLevel / $maxLevel';
 
-    double speedBonus;
-    if (currentLevel <= 4) {
-      speedBonus = 14.0;
-    } else if (currentLevel <= 7) {
-      speedBonus = 11.0;
-    } else {
-      speedBonus = 7.0;
-    }
-
+    double speedBonus = (currentLevel <= 4) ? 14.0 : (currentLevel <= 7) ? 11.0 : 7.0;
     worldScrollSpeed += speedBonus;
 
     addMoreBushes();
-
     FlameAudio.play('clinking_coins.mp3', volume: 0.85);
-
-    print('Đạt nhà → Level $currentLevel | Speed: $worldScrollSpeed | High: $highScore');
   }
 
   void addMoreBushes() {
@@ -304,21 +338,16 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     double lastX = bushes.isEmpty ? size.x : bushes.map((b) => b.position.x).reduce(math.max);
 
     final List<Component> toAdd = [];
-
     for (int i = 0; i < 3 + currentLevel ~/ 3; i++) {
       double x = lastX + 220 + random.nextDouble() * 180;
       double gapY = 100 + random.nextDouble() * (size.y - 200);
-
       final bush1 = Bush(Vector2(x, gapY - 110 - random.nextDouble() * 60));
       final bush2 = Bush(Vector2(x, gapY + 110 + random.nextDouble() * 60));
-
       bushes.add(bush1);
       bushes.add(bush2);
       toAdd.addAll([bush1, bush2]);
-
       lastX = x;
     }
-
     addAll(toAdd);
   }
 
@@ -328,15 +357,34 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     player?.jump();
   }
 
+  // SỬA CHỮ KÝ onKeyEvent cho Flame 1.35.1 (dùng KeyEvent thay RawKeyEvent)
+  @override
+  KeyEventResult onKeyEvent(KeyEvent event, Set<LogicalKeyboardKey> keysPressed) {
+    super.onKeyEvent(event, keysPressed);
+
+    if (isGameOver || !isShootingMode) {
+      return KeyEventResult.ignored;
+    }
+
+    // Nhấn Space → bắn 1 phát
+    if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.space) {
+      if (player != null) {
+        final bullet = Bullet(player!.position.clone() + Vector2(50, 0));
+        add(bullet);
+        FlameAudio.play('simple_whoosh.mp3', volume: 0.5);
+      }
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
+  }
+
   void gameOver() {
     if (isGameOver) return;
     isGameOver = true;
-
     _lastReachedLevel = currentLevel;
-
     FlameAudio.play('game_over_deep_voice.mp3', volume: 1.0);
     stopBackgroundMusic();
-
     pauseEngine();
     overlays.add('GameOver');
   }
@@ -352,8 +400,102 @@ class MazeGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   }
 }
 
-// Các class còn lại (Player, Bush, ExitPortal, HudButton, StartScreenOverlay, PauseMenuOverlay, GameOverOverlay)
-// Giữ nguyên như code cũ của bạn - không cần thay đổi
+// ── ShootButton cho mobile ──────────────────────────────────────────
+class ShootButton extends PositionComponent with TapCallbacks {
+  final VoidCallback onPressed;
+  late TextComponent label;
+
+  ShootButton({required Vector2 position, required this.onPressed})
+      : super(position: position, size: Vector2(100, 100));
+
+  @override
+  Future<void> onLoad() async {
+    add(CircleComponent(
+      radius: 50,
+      paint: Paint()..color = Colors.redAccent.withValues(alpha: 0.7),
+      anchor: Anchor.center,
+      position: size / 2,
+    ));
+
+    label = TextComponent(
+      text: 'BẮN',
+      textRenderer: TextPaint(
+        style: const TextStyle(
+          fontSize: 32,
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      anchor: Anchor.center,
+      position: size / 2,
+    );
+    add(label);
+  }
+
+  @override
+  void onTapDown(TapDownEvent event) {
+    onPressed();
+  }
+}
+
+// ── Bullet, BigPenguin, Player, Bush, ExitPortal, HudButton giữ nguyên ──
+class Bullet extends SpriteComponent with CollisionCallbacks {
+  final double speed = 680.0;
+
+  Bullet(Vector2 position)
+      : super(position: position, size: Vector2(48, 20), anchor: Anchor.center);
+
+  @override
+  Future<void> onLoad() async {
+    try {
+      sprite = await Sprite.load('bullet.png');
+    } catch (e) {
+      print('Không load bullet → dùng màu thay thế');
+      paint = Paint()..color = Colors.orangeAccent.withValues(alpha: 0.9);
+    }
+    add(RectangleHitbox(
+      size: size * 0.88,
+      anchor: Anchor.center,
+      position: size / 2,
+    ));
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    position.x += speed * dt;
+
+    final game = findGame() as MazeGame?;
+    if (position.x > (game?.size.x ?? 0) + 150) {
+      removeFromParent();
+    }
+  }
+
+  @override
+  void onCollisionStart(Set<Vector2> intersectionPoints, PositionComponent other) {
+    super.onCollisionStart(intersectionPoints, other);
+    if (other is Bush) {
+      other.removeFromParent();
+      removeFromParent();
+    }
+  }
+}
+
+class BigPenguin extends SpriteComponent with CollisionCallbacks {
+  BigPenguin(Vector2 position)
+      : super(position: position, size: Vector2(90, 90), anchor: Anchor.center);
+
+  @override
+  Future<void> onLoad() async {
+    try {
+      sprite = await Sprite.load('pngtree-penguin-skiing-vector-png-image_12156156.png');
+    } catch (e) {
+      print('Không load big penguin → dùng màu');
+      paint = Paint()..color = Colors.cyan.withValues(alpha: 0.7);
+    }
+    add(CircleHitbox(radius: 42));
+  }
+}
 
 class Player extends SpriteComponent with CollisionCallbacks {
   CircleHitbox? hitbox;
@@ -397,9 +539,22 @@ class Player extends SpriteComponent with CollisionCallbacks {
   @override
   void onCollisionStart(Set<Vector2> intersectionPoints, PositionComponent other) {
     super.onCollisionStart(intersectionPoints, other);
+
     final game = findGame() as MazeGame?;
-    if (other is Bush && game != null) {
+    if (game == null) return;
+
+    if (other is Bush) {
       game.gameOver();
+    } else if (other is BigPenguin) {
+      other.removeFromParent();
+      game.powerCollected++;
+      FlameAudio.play('simple_whoosh.mp3', volume: 0.9);
+
+      if (game.powerCollected >= 3) {
+        game.isShootingMode = true;
+        game.shootingTimer = game.shootingDuration;
+        game.powerCollected = 0;
+      }
     }
   }
 }
@@ -470,9 +625,9 @@ class HudButton extends PositionComponent with TapCallbacks {
   }
 }
 
+// ── Overlays giữ nguyên ─────────────────────────────────────────────
 class StartScreenOverlay extends StatefulWidget {
   final MazeGame game;
-
   const StartScreenOverlay({super.key, required this.game});
 
   @override
@@ -588,7 +743,6 @@ class _StartScreenOverlayState extends State<StartScreenOverlay> {
 
 class PauseMenuOverlay extends StatelessWidget {
   final MazeGame game;
-
   const PauseMenuOverlay({super.key, required this.game});
 
   @override
@@ -607,8 +761,7 @@ class PauseMenuOverlay extends StatelessWidget {
             const SizedBox(height: 60),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 90, vertical: 28),
+                padding: const EdgeInsets.symmetric(horizontal: 90, vertical: 28),
                 backgroundColor: Colors.blue,
               ),
               onPressed: () {
@@ -620,8 +773,7 @@ class PauseMenuOverlay extends StatelessWidget {
             const SizedBox(height: 28),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 90, vertical: 28),
+                padding: const EdgeInsets.symmetric(horizontal: 90, vertical: 28),
                 backgroundColor: Colors.orange,
               ),
               onPressed: () async {
@@ -639,13 +791,11 @@ class PauseMenuOverlay extends StatelessWidget {
 
 class GameOverOverlay extends StatelessWidget {
   final MazeGame game;
-
   const GameOverOverlay({super.key, required this.game});
 
   @override
   Widget build(BuildContext context) {
     final reached = game._lastReachedLevel ?? game.currentLevel;
-
     return Material(
       color: Colors.black.withAlpha(220),
       child: Center(
@@ -698,12 +848,10 @@ class GameOverOverlay extends StatelessWidget {
                 children: [
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 50, vertical: 20),
+                      padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
                       backgroundColor: Colors.green.shade700,
                       minimumSize: const Size(140, 70),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                     ),
                     onPressed: () {
                       game.overlays.remove('GameOver');
@@ -711,18 +859,15 @@ class GameOverOverlay extends StatelessWidget {
                     },
                     child: const Text(
                       'CÓ',
-                      style:
-                          TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
+                      style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
                     ),
                   ),
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 50, vertical: 20),
+                      padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
                       backgroundColor: Colors.red.shade700,
                       minimumSize: const Size(140, 70),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                     ),
                     onPressed: () {
                       game.overlays.remove('GameOver');
@@ -730,8 +875,7 @@ class GameOverOverlay extends StatelessWidget {
                     },
                     child: const Text(
                       'KHÔNG',
-                      style:
-                          TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
+                      style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
                     ),
                   ),
                 ],
