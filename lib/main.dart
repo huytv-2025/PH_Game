@@ -53,12 +53,11 @@ class MazeGame extends FlameGame
       HasCollisionDetection, 
       TapCallbacks, 
       HasKeyboardHandlerComponents
-     
 {
   Player? player;
   late TextComponent levelText;
   TextComponent? nameDisplay;
-  TextComponent? powerDisplay;
+  TextComponent? ammoDisplay;
   HudButton? pauseButton;
   ShootButton? shootButton;
 
@@ -74,10 +73,7 @@ class MazeGame extends FlameGame
   double worldScrollSpeed = 180.0;
   String playerName = 'Người chơi';
 
-  int powerCollected = 0;
-  bool isShootingMode = false;
-  double shootingTimer = 0.0;
-  final double shootingDuration = 12.0;
+  int bulletsAvailable = 0;
 
   @override
   Future<void> onLoad() async {
@@ -115,7 +111,7 @@ class MazeGame extends FlameGame
   }
 
   Future<void> loadLevel(int level) async {
-    print('Load level $level - Tên: $playerName');
+    print('=== LOAD LEVEL $level ===');
 
     final toRemove = <Component>[];
     for (final c in children) {
@@ -127,7 +123,7 @@ class MazeGame extends FlameGame
           (c is TextComponent &&
               (c.text.contains('Người chơi:') ||
                   c.text.contains('Màn') ||
-                  c.text.contains('Power')))) {
+                  c.text.contains('Đạn')))) {
         toRemove.add(c);
       }
     }
@@ -136,7 +132,7 @@ class MazeGame extends FlameGame
     bushes.clear();
     portals.clear();
     nameDisplay = null;
-    powerDisplay = null;
+    ammoDisplay = null;
     shootButton = null;
 
     pauseButton = HudButton(
@@ -152,13 +148,7 @@ class MazeGame extends FlameGame
 
     shootButton = ShootButton(
       position: Vector2(size.x - 100, size.y - 120),
-      onPressed: () {
-        if (isShootingMode && player != null && !isGameOver) {
-          final bullet = Bullet(player!.position.clone() + Vector2(50, 0));
-          add(bullet);
-          FlameAudio.play('simple_whoosh.mp3', volume: 0.5);
-        }
-      },
+      onPressed: shootBullet,
     );
     add(shootButton!);
 
@@ -184,8 +174,8 @@ class MazeGame extends FlameGame
     );
     add(nameDisplay!);
 
-    powerDisplay = TextComponent(
-      text: 'Power: 0/3',
+    ammoDisplay = TextComponent(
+      text: 'Đạn: 0',
       position: Vector2(20, 80),
       anchor: Anchor.topLeft,
       textRenderer: TextPaint(
@@ -196,7 +186,7 @@ class MazeGame extends FlameGame
         ),
       ),
     );
-    add(powerDisplay!);
+    add(ammoDisplay!);
 
     generateObstacles(level);
     generatePortals(level);
@@ -210,12 +200,30 @@ class MazeGame extends FlameGame
     worldScrollSpeed = 180.0 + (level - 1) * 12.0;
     worldScrollSpeed = worldScrollSpeed.clamp(180.0, 340.0);
 
-    powerCollected = 0;
-    isShootingMode = false;
-    shootingTimer = 0;
+    // Luôn có 5 viên đạn khi bắt đầu level để test phá bụi cây
+    bulletsAvailable = 5;  // ← đổi thành 0 nếu muốn chơi bình thường sau khi test xong
+    updateAmmoDisplay();
 
-    print(
-        'Level $level - bushes: ${bushes.length} - portals: ${portals.length} - speed: $worldScrollSpeed');
+    print('Level $level loaded - bullets khởi tạo: $bulletsAvailable');
+  }
+
+  void shootBullet() {
+    if (bulletsAvailable >= 1 && player != null && !isGameOver) {
+      final bullet = Bullet(player!.position.clone() + Vector2(50, 0));
+      add(bullet);
+      FlameAudio.play('simple_whoosh.mp3', volume: 0.5);
+      bulletsAvailable--;
+      updateAmmoDisplay();
+      print('BẮN ĐẠN (thủ công) → còn lại: $bulletsAvailable');
+    } else {
+      print('Không bắn được: đạn = $bulletsAvailable');
+    }
+  }
+
+  void updateAmmoDisplay() {
+    if (ammoDisplay != null) {
+      ammoDisplay!.text = 'Đạn: $bulletsAvailable';
+    }
   }
 
   void generateObstacles(int level) {
@@ -263,15 +271,17 @@ class MazeGame extends FlameGame
 
   void generatePowerPenguins(int level) {
     final random = math.Random();
-    int count = 1 + (level ~/ 5);
+    int count = 1 + (level ~/ 4);
 
-    double lastX = size.x + 900 + random.nextDouble() * 400;
+    double lastX = size.x + 800 + random.nextDouble() * 600;
 
     for (int i = 0; i < count; i++) {
-      double x = lastX + 800 + random.nextDouble() * 700;
-      double y = 120 + random.nextDouble() * (size.y - 240);
-      final powerPenguin = BigPenguin(Vector2(x, y));
-      add(powerPenguin);
+      double x = lastX + 700 + random.nextDouble() * 800;
+      double y = 100 + random.nextDouble() * (size.y - 200);
+      
+      final penguin = BigPenguin(Vector2(x, y));
+      add(penguin);
+      
       lastX = x;
     }
   }
@@ -305,19 +315,6 @@ class MazeGame extends FlameGame
     }
 
     player?.applyPhysics(dt);
-
-    if (isShootingMode) {
-      shootingTimer -= dt;
-      if (shootingTimer <= 0) {
-        isShootingMode = false;
-        powerCollected = 0;
-      }
-    }
-
-    if (powerDisplay != null) {
-      powerDisplay!.text =
-          'Power: $powerCollected/3${isShootingMode ? "  [BẮN ĐẠN! ${shootingTimer.toStringAsFixed(1)}s]" : ""}';
-    }
   }
 
   void onReachPortal() {
@@ -331,6 +328,9 @@ class MazeGame extends FlameGame
 
     addMoreBushes();
     FlameAudio.play('clinking_coins.mp3', volume: 0.85);
+
+    bulletsAvailable = 0;
+    updateAmmoDisplay();
   }
 
   void addMoreBushes() {
@@ -357,22 +357,14 @@ class MazeGame extends FlameGame
     player?.jump();
   }
 
-  // SỬA CHỮ KÝ onKeyEvent cho Flame 1.35.1 (dùng KeyEvent thay RawKeyEvent)
   @override
   KeyEventResult onKeyEvent(KeyEvent event, Set<LogicalKeyboardKey> keysPressed) {
     super.onKeyEvent(event, keysPressed);
 
-    if (isGameOver || !isShootingMode) {
-      return KeyEventResult.ignored;
-    }
+    if (isGameOver) return KeyEventResult.ignored;
 
-    // Nhấn Space → bắn 1 phát
     if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.space) {
-      if (player != null) {
-        final bullet = Bullet(player!.position.clone() + Vector2(50, 0));
-        add(bullet);
-        FlameAudio.play('simple_whoosh.mp3', volume: 0.5);
-      }
+      shootBullet();
       return KeyEventResult.handled;
     }
 
@@ -400,7 +392,6 @@ class MazeGame extends FlameGame
   }
 }
 
-// ── ShootButton cho mobile ──────────────────────────────────────────
 class ShootButton extends PositionComponent with TapCallbacks {
   final VoidCallback onPressed;
   late TextComponent label;
@@ -438,12 +429,11 @@ class ShootButton extends PositionComponent with TapCallbacks {
   }
 }
 
-// ── Bullet, BigPenguin, Player, Bush, ExitPortal, HudButton giữ nguyên ──
 class Bullet extends SpriteComponent with CollisionCallbacks {
   final double speed = 680.0;
 
   Bullet(Vector2 position)
-      : super(position: position, size: Vector2(48, 20), anchor: Anchor.center);
+      : super(position: position, size: Vector2(60, 24), anchor: Anchor.center);
 
   @override
   Future<void> onLoad() async {
@@ -453,8 +443,19 @@ class Bullet extends SpriteComponent with CollisionCallbacks {
       print('Không load bullet → dùng màu thay thế');
       paint = Paint()..color = Colors.orangeAccent.withValues(alpha: 0.9);
     }
+
     add(RectangleHitbox(
-      size: size * 0.88,
+      size: size,
+      anchor: Anchor.center,
+      position: size / 2,
+    ));
+
+    add(RectangleComponent(
+      size: size,
+      paint: Paint()
+        ..color = Colors.yellow.withValues(alpha: 0.6)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
       anchor: Anchor.center,
       position: size / 2,
     ));
@@ -466,7 +467,7 @@ class Bullet extends SpriteComponent with CollisionCallbacks {
     position.x += speed * dt;
 
     final game = findGame() as MazeGame?;
-    if (position.x > (game?.size.x ?? 0) + 150) {
+    if (position.x > (game?.size.x ?? 0) + 200) {
       removeFromParent();
     }
   }
@@ -474,7 +475,10 @@ class Bullet extends SpriteComponent with CollisionCallbacks {
   @override
   void onCollisionStart(Set<Vector2> intersectionPoints, PositionComponent other) {
     super.onCollisionStart(intersectionPoints, other);
+    print('Bullet va chạm với: ${other.runtimeType} tại ${other.position}');
+
     if (other is Bush) {
+      print('→ PHÁ BỤI THÀNH CÔNG! Xóa bush tại ${other.position}');
       other.removeFromParent();
       removeFromParent();
     }
@@ -490,10 +494,11 @@ class BigPenguin extends SpriteComponent with CollisionCallbacks {
     try {
       sprite = await Sprite.load('pngtree-penguin-skiing-vector-png-image_12156156.png');
     } catch (e) {
-      print('Không load big penguin → dùng màu');
-      paint = Paint()..color = Colors.cyan.withValues(alpha: 0.7);
+      print('Không load penguin sprite → dùng màu thay thế');
+      paint = Paint()..color = Colors.red.withValues(alpha: 0.4);
     }
-    add(CircleHitbox(radius: 42));
+
+    add(CircleHitbox(radius: 40));
   }
 }
 
@@ -514,7 +519,8 @@ class Player extends SpriteComponent with CollisionCallbacks {
       print('Không load penguin: $e');
       paint = Paint()..color = Colors.yellow;
     }
-    hitbox = CircleHitbox(radius: 24);
+
+    hitbox = CircleHitbox(radius: 28);
     add(hitbox!);
   }
 
@@ -544,26 +550,39 @@ class Player extends SpriteComponent with CollisionCallbacks {
     if (game == null) return;
 
     if (other is Bush) {
+      print('Va chạm BUSH → Game Over');
       game.gameOver();
-    } else if (other is BigPenguin) {
-      other.removeFromParent();
-      game.powerCollected++;
-      FlameAudio.play('simple_whoosh.mp3', volume: 0.9);
+    }
+    else if (other is BigPenguin) {
+      print('ĐỤNG CHIM → +1 ĐẠN (không tự bắn)');
 
-      if (game.powerCollected >= 3) {
-        game.isShootingMode = true;
-        game.shootingTimer = game.shootingDuration;
-        game.powerCollected = 0;
+      other.removeFromParent();
+
+      game.bulletsAvailable += 1;
+      game.updateAmmoDisplay();
+
+      // Hiệu ứng scale text đạn
+      if (game.ammoDisplay != null) {
+        game.ammoDisplay!.scale = Vector2.all(1.5);
+        game.add(
+          TimerComponent(
+            period: 0.4,
+            repeat: false,
+            onTick: () => game.ammoDisplay?.scale = Vector2.all(1.0),
+          ),
+        );
       }
+
+      FlameAudio.play('clinking_coins.mp3', volume: 0.7);
     }
   }
 }
 
-class Bush extends SpriteComponent {
+class Bush extends SpriteComponent with CollisionCallbacks {
   RectangleHitbox? hitbox;
 
   Bush(Vector2 pos)
-      : super(position: pos, size: Vector2(88, 88), anchor: Anchor.center);
+      : super(position: pos, size: Vector2(100, 100), anchor: Anchor.center);
 
   @override
   Future<void> onLoad() async {
@@ -573,12 +592,23 @@ class Bush extends SpriteComponent {
       print('Không load bush: $e');
       paint = Paint()..color = Colors.green.shade700;
     }
+
     hitbox = RectangleHitbox(
-      size: Vector2(76, 76),
+      size: size,
       anchor: Anchor.center,
       position: size / 2,
     );
     add(hitbox!);
+
+    add(RectangleComponent(
+      size: size,
+      paint: Paint()
+        ..color = Colors.red.withValues(alpha: 0.5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+      anchor: Anchor.center,
+      position: size / 2,
+    ));
   }
 }
 
@@ -591,7 +621,7 @@ class ExitPortal extends SpriteComponent {
     try {
       sprite = await Sprite.load('pngtree-cute-penguin-ski-illustration-png-image_5472693.png');
     } catch (e) {
-      print('Không load house: $e');
+      print('Không load portal: $e');
       paint = Paint()..color = Colors.brown;
     }
     add(CircleHitbox(radius: 55));
@@ -625,7 +655,7 @@ class HudButton extends PositionComponent with TapCallbacks {
   }
 }
 
-// ── Overlays giữ nguyên ─────────────────────────────────────────────
+// ── Overlays (giữ nguyên) ─────────────────────────────────────────────
 class StartScreenOverlay extends StatefulWidget {
   final MazeGame game;
   const StartScreenOverlay({super.key, required this.game});
