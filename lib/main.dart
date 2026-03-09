@@ -201,7 +201,7 @@ class MazeGame extends FlameGame
     worldScrollSpeed = worldScrollSpeed.clamp(180.0, 340.0);
 
     // Luôn có 5 viên đạn khi bắt đầu level để test phá bụi cây
-    bulletsAvailable = 5;  // ← đổi thành 0 nếu muốn chơi bình thường sau khi test xong
+    bulletsAvailable = 20;  // ← đổi thành 0 nếu muốn chơi bình thường sau khi test xong
     updateAmmoDisplay();
 
     print('Level $level loaded - bullets khởi tạo: $bulletsAvailable');
@@ -222,7 +222,7 @@ class MazeGame extends FlameGame
 
   void updateAmmoDisplay() {
     if (ammoDisplay != null) {
-      ammoDisplay!.text = 'Đạn: $bulletsAvailable';
+      ammoDisplay!.text = 'Chim: $bulletsAvailable / 50';
     }
   }
 
@@ -318,9 +318,15 @@ class MazeGame extends FlameGame
   }
 
   void onReachPortal() {
+  // Điều kiện thắng: phải thu thập đủ 100 viên đạn (đụng 100 con chim)
+  const int requiredAmmoToPass = 50;
+
+  if (bulletsAvailable >= requiredAmmoToPass) {
+    // Đủ đạn → lên level mới
     currentLevel++;
     if (currentLevel > maxLevel) currentLevel = maxLevel;
     if (currentLevel > highScore) highScore = currentLevel;
+
     levelText.text = 'Màn $currentLevel / $maxLevel';
 
     double speedBonus = (currentLevel <= 4) ? 14.0 : (currentLevel <= 7) ? 11.0 : 7.0;
@@ -329,10 +335,43 @@ class MazeGame extends FlameGame
     addMoreBushes();
     FlameAudio.play('clinking_coins.mp3', volume: 0.85);
 
-    bulletsAvailable = 0;
+    // Reset đạn về 5 viên cho level mới (hoặc giữ nguyên tùy ý)
+    bulletsAvailable = 5;
     updateAmmoDisplay();
-  }
 
+    print('→ ĐỦ 100 CHIM → LÊN MÀN $currentLevel | Đạn reset về 20');
+  } else {
+    // Chưa đủ 100 → không cho qua cổng
+    // Bỏ phần đẩy ngược người chơi để giữ vị trí như bình thường
+
+    // Cách 2 (tùy chọn): phát âm thanh cảnh báo
+    FlameAudio.play('game_over_deep_voice.mp3', volume: 0.4);
+
+    // Hiển thị thông báo (tùy chọn - thêm TextComponent tạm thời)
+    final noti = TextComponent(
+      text: 'Cần đủ 100 chim mới qua được!',
+      position: Vector2(size.x / 2, size.y / 2 - 60),
+      anchor: Anchor.center,
+      textRenderer: TextPaint(
+        style: const TextStyle(
+          fontSize: 42,
+          color: Colors.redAccent,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+    add(noti);
+    add(
+      TimerComponent(
+        period: 2.5,
+        repeat: false,
+        onTick: () => noti.removeFromParent(),
+      ),
+    );
+
+    print('Chưa đủ 100 chim ($bulletsAvailable / 100) → không qua cổng được');
+  }
+}
   void addMoreBushes() {
     final random = math.Random();
     double lastX = bushes.isEmpty ? size.x : bushes.map((b) => b.position.x).reduce(math.max);
@@ -554,27 +593,24 @@ class Player extends SpriteComponent with CollisionCallbacks {
       game.gameOver();
     }
     else if (other is BigPenguin) {
-      print('ĐỤNG CHIM → +1 ĐẠN (không tự bắn)');
+  print('ĐỤNG CHIM → +1 ĐẠN');
+  other.removeFromParent();
+  game.bulletsAvailable += 1;
+  game.updateAmmoDisplay();
 
-      other.removeFromParent();
-
-      game.bulletsAvailable += 1;
-      game.updateAmmoDisplay();
-
-      // Hiệu ứng scale text đạn
-      if (game.ammoDisplay != null) {
-        game.ammoDisplay!.scale = Vector2.all(1.5);
-        game.add(
-          TimerComponent(
-            period: 0.4,
-            repeat: false,
-            onTick: () => game.ammoDisplay?.scale = Vector2.all(1.0),
-          ),
-        );
-      }
-
-      FlameAudio.play('clinking_coins.mp3', volume: 0.7);
-    }
+  // Hiệu ứng scale text đạn (giữ nguyên)
+  if (game.ammoDisplay != null) {
+    game.ammoDisplay!.scale = Vector2.all(1.5);
+    game.add(
+      TimerComponent(
+        period: 0.4,
+        repeat: false,
+        onTick: () => game.ammoDisplay?.scale = Vector2.all(1.0),
+      ),
+    );
+  }
+  FlameAudio.play('clinking_coins.mp3', volume: 0.7);
+}
   }
 }
 
@@ -916,4 +952,4 @@ class GameOverOverlay extends StatelessWidget {
       ),
     );
   }
-}
+} 
