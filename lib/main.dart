@@ -524,7 +524,9 @@ class Bullet extends SpriteComponent with CollisionCallbacks {
   }
 }
 
-class BigPenguin extends SpriteComponent with CollisionCallbacks {
+class BigPenguin extends SpriteComponent 
+    with CollisionCallbacks, HasGameReference<MazeGame>
+{
   BigPenguin(Vector2 position)
       : super(position: position, size: Vector2(90, 90), anchor: Anchor.center);
 
@@ -537,7 +539,33 @@ class BigPenguin extends SpriteComponent with CollisionCallbacks {
       paint = Paint()..color = Colors.red.withValues(alpha: 0.4);
     }
 
-    add(CircleHitbox(radius: 40));
+    // Tăng kích thước hitbox một chút để dễ va chạm hơn
+    final hitbox = CircleHitbox(
+      radius: 45,           // lớn hơn một chút so với trước
+      anchor: Anchor.center,
+    );
+    
+    add(hitbox);
+
+    // Debug: vẽ hitbox rõ ràng để kiểm tra
+    add(
+      CircleComponent(
+        radius: 45,
+        paint: Paint()
+          ..color = Colors.purple.withValues(alpha: 0.4)   // ← cách đúng mới
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3,
+        anchor: Anchor.center,
+      )
+    );
+
+    print("BigPenguin loaded at ${position}, hitbox added");
+  }
+
+  @override
+  void onCollision(Set<Vector2> intersectionPoints, PositionComponent other) {
+    super.onCollision(intersectionPoints, other);
+    // Bạn có thể thêm log ở đây để debug thêm
   }
 }
 
@@ -582,36 +610,41 @@ class Player extends SpriteComponent with CollisionCallbacks {
   }
 
   @override
-  void onCollisionStart(Set<Vector2> intersectionPoints, PositionComponent other) {
-    super.onCollisionStart(intersectionPoints, other);
+void onCollisionStart(Set<Vector2> intersectionPoints, PositionComponent other) {
+  super.onCollisionStart(intersectionPoints, other);
 
-    final game = findGame() as MazeGame?;
-    if (game == null) return;
+  final game = findGame() as MazeGame?;
+  if (game == null) return;
 
-    if (other is Bush) {
-      print('Va chạm BUSH → Game Over');
-      game.gameOver();
+  print("Player va chạm với: ${other.runtimeType} tại ${other.position}");
+
+  if (other is Bush) {
+    print('Va chạm BUSH → Game Over');
+    game.gameOver();
+  }
+  else if (other is BigPenguin) {
+    print('ĐỤNG CHIM → +1 ĐẠN  |  Vị trí chim: ${other.position}');
+    other.removeFromParent();
+    game.bulletsAvailable += 1;
+    game.updateAmmoDisplay();
+
+    // Hiệu ứng scale text đạn
+    if (game.ammoDisplay != null) {
+      game.ammoDisplay!.scale = Vector2.all(1.5);
+      game.add(
+        TimerComponent(
+          period: 0.4,
+          repeat: false,
+          onTick: () => game.ammoDisplay?.scale = Vector2.all(1.0),
+        ),
+      );
     }
-    else if (other is BigPenguin) {
-  print('ĐỤNG CHIM → +1 ĐẠN');
-  other.removeFromParent();
-  game.bulletsAvailable += 1;
-  game.updateAmmoDisplay();
-
-  // Hiệu ứng scale text đạn (giữ nguyên)
-  if (game.ammoDisplay != null) {
-    game.ammoDisplay!.scale = Vector2.all(1.5);
-    game.add(
-      TimerComponent(
-        period: 0.4,
-        repeat: false,
-        onTick: () => game.ammoDisplay?.scale = Vector2.all(1.0),
-      ),
-    );
+    FlameAudio.play('clinking_coins.mp3', volume: 0.7);
   }
-  FlameAudio.play('clinking_coins.mp3', volume: 0.7);
+  else {
+    print("Va chạm với thứ khác: ${other.runtimeType}");
+  }
 }
-  }
 }
 
 class Bush extends SpriteComponent with CollisionCallbacks {
